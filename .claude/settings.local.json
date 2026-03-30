@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(cargo check:*)",
+      "Bash(cargo build:*)",
+      "Bash(grep -r 'pub fn close' target/debug/.fingerprint/../../../.cargo/registry/src/*/iced-0.13.*/src/)",
+      "Read(//c/Users/a.brunnberg/.cargo/registry/src/**)",
+      "Bash(2)",
+      "Read(//c/Users/**)",
+      "Bash(find ~/.cargo/registry/src -path */iced_runtime-0.13*/src/window.rs -exec grep -n \"pub fn\\\\|MAIN\" {})",
+      "WebFetch(domain:help.obsidian.md)",
+      "WebFetch(domain:obsidian.rocks)",
+      "WebFetch(domain:obsidian.md)",
+      "Read(//home/a.brunnberg/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_widget-0.13.4/src/**)",
+      "Bash(cygpath -a ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_widget-0.13.4/src/text/rich.rs)",
+      "Bash(find ~/.cargo/registry/src -type f -name *.rs -path *highlighter*)",
+      "Bash(grep -n \"pub struct Span\\\\|pub struct Text\" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_core-0.13.2/src/text/*.rs)",
+      "Bash(xargs grep:*)",
+      "Bash(grep -v \"//\")",
+      "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_widget-0.13.4/src/**)",
+      "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_widget-0.13.4/**)",
+      "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_core-0.13.2/src/**)",
+      "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_runtime-0.13.2/src/**)",
+      "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_futures-0.13.2/src/**)",
+      "Bash(grep -E \"\\\\.\\(md|toml\\)$\")",
+      "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_core-0.13.2/src/text/**)",
+      "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced-0.13.1/src/**)",
+      "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_core-0.13.2/src/mouse/**)",
+      "Bash(taskkill //F //IM notes-app.exe)"
+    ]
+  }
+}
