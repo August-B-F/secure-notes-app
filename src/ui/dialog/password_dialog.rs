@@ -6,30 +6,29 @@ use crate::app::Message;
 use crate::ui::{icons, theme};
 
 /// Window buttons for auth screens (always visible).
-fn window_buttons<'a>(controls_hovered: bool, is_maximized: bool) -> Element<'a, Message> {
-    let h = controls_hovered;
-    let min_content: Element<Message> = if h { svg(icons::win_minimize()).width(8).height(8).into() } else { Space::new(12, 12).into() };
-    let max_content: Element<Message> = if h { svg(icons::win_maximize()).width(8).height(8).into() } else { Space::new(12, 12).into() };
-    let close_content: Element<Message> = if h { svg(icons::win_close()).width(8).height(8).into() } else { Space::new(12, 12).into() };
-    let p = if h { 2 } else { 0 };
-    let controls: Element<Message> = mouse_area(
-        row![
-            button(min_content).on_press(Message::WindowMinimize)
-                .style(theme::color_dot_button(iced::Color::from_rgb8(0xE5, 0xD5, 0x4D), false)).padding(p),
-            button(max_content).on_press(Message::WindowMaximize)
-                .style(theme::color_dot_button(iced::Color::from_rgb8(0x4D, 0xC8, 0x6A), false)).padding(p),
-            button(close_content).on_press(Message::WindowClose)
-                .style(theme::color_dot_button(iced::Color::from_rgb8(0xE5, 0x4D, 0x4D), false)).padding(p),
-        ].spacing(8).align_y(iced::Alignment::Center)
-    )
-    .on_enter(Message::WindowControlsHover(true))
-    .on_exit(Message::WindowControlsHover(false))
-    .into();
+fn window_buttons<'a>(_controls_hovered: bool, is_maximized: bool) -> Element<'a, Message> {
+    let controls = row![
+        button(svg(icons::win_minimize()).width(16).height(16)
+            .style(theme::svg_hover_color(iced::Color::from_rgb8(0xE5, 0xD5, 0x4D))))
+            .on_press(Message::WindowMinimize)
+            .style(theme::transparent_button)
+            .padding([4, 6]),
+        button(svg(icons::win_maximize()).width(16).height(16)
+            .style(theme::svg_hover_color(iced::Color::from_rgb8(0x4D, 0xC8, 0x6A))))
+            .on_press(Message::WindowMaximize)
+            .style(theme::transparent_button)
+            .padding([4, 6]),
+        button(svg(icons::win_close()).width(16).height(16)
+            .style(theme::svg_hover_color(iced::Color::from_rgb8(0xE5, 0x4D, 0x4D))))
+            .on_press(Message::WindowClose)
+            .style(theme::transparent_button)
+            .padding([4, 6]),
+    ].spacing(4).align_y(iced::Alignment::Center);
 
     mouse_area(
         container(
             row![
-                iced::widget::image(iced::widget::image::Handle::from_path("assets/logo.png")).width(16).height(16),
+                iced::widget::image(iced::widget::image::Handle::from_bytes(include_bytes!("../../../assets/logo.png").to_vec())).width(16).height(16),
                 Space::with_width(Length::Fill),
                 // Invisible placeholder matching the lock button size in the unlocked view
                 container(Space::new(16, 16)).padding([4, 6]),

@@ -132,11 +132,11 @@ pub fn view<'a>(
                 };
                 file_list = file_list.push(folder_item);
             } else {
-                let release_msg = if is_dragging { Message::DragEnd } else { Message::ToggleFolderSelect(sid) };
+                let release_msg = if is_dragging { Message::DragEnd(false) } else { Message::ToggleFolderSelect(sid) };
                 let folder_item: Element<Message> = mouse_area(folder_container)
                     .on_press(Message::DragPotential(crate::app::DragItem::Folder(sid)))
                     .on_release(release_msg)
-                    .on_right_press(if is_dragging { Message::DragEnd } else { Message::ToggleContextMenu(ContextMenu::Tag(sid)) })
+                    .on_right_press(if is_dragging { Message::DragEnd(false) } else { Message::ToggleContextMenu(ContextMenu::Tag(sid)) })
                     .on_enter(Message::HoverItem(Some(sid)))
                     .into();
                 file_list = file_list.push(folder_item);
@@ -163,6 +163,9 @@ pub fn view<'a>(
         }
     }
 
+    let has_items = !notes.is_empty() || (is_folder_view && !subfolders.is_empty())
+        || (!is_folder_view && subfolders.iter().any(|f| f.is_favorite));
+
     let scrollable_list = scrollable(file_list.padding([0, 6]))
         .direction(iced::widget::scrollable::Direction::Vertical(theme::thin_scrollbar()))
         .style(theme::dark_scrollable);
@@ -178,6 +181,24 @@ pub fn view<'a>(
             ma = ma.on_release(msg);
         }
         ma.into()
+    } else if !has_items {
+        mouse_area(
+            container(
+                column![
+                    iced::widget::Space::with_height(24),
+                    text("No notes yet").size(13).style(|_t| theme::secondary_text())
+                        .align_x(iced::alignment::Horizontal::Center),
+                    text("Right-click to create one").size(11).style(|_t| iced::widget::text::Style {
+                        color: Some(iced::Color::from_rgb(0.40, 0.40, 0.42)),
+                    }).align_x(iced::alignment::Horizontal::Center),
+                ].spacing(4).align_x(iced::Alignment::Center).width(Length::Fill)
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+        )
+        .on_right_press(Message::ToggleContextMenu(ContextMenu::NotesEmpty))
+        .on_enter(Message::HoverItem(None))
+        .into()
     } else {
         mouse_area(
             container(iced::widget::Space::new(Length::Fill, Length::Fill))
@@ -370,12 +391,12 @@ fn render_note<'a>(
         })
         .width(Length::Fill);
 
-    let release_msg = if is_dragging { Message::DragEnd } else { Message::SelectNote(nid) };
+    let release_msg = if is_dragging { Message::DragEnd(false) } else { Message::SelectNote(nid) };
 
     mouse_area(card_container)
         .on_press(Message::DragPotential(crate::app::DragItem::Note(nid)))
         .on_release(release_msg)
-        .on_right_press(if is_dragging { Message::DragEnd } else { Message::ToggleContextMenu(ContextMenu::NoteItem(nid)) })
+        .on_right_press(if is_dragging { Message::DragEnd(false) } else { Message::ToggleContextMenu(ContextMenu::NoteItem(nid)) })
         .on_enter(Message::HoverItem(Some(nid)))
         .into()
 }
@@ -507,11 +528,11 @@ fn collect_folder_children<'a>(
             items.push(folder_item);
         } else {
             let is_dragging = dragging.is_some();
-            let release_msg = if is_dragging { Message::DragEnd } else { Message::ToggleFolderSelect(sid) };
+            let release_msg = if is_dragging { Message::DragEnd(false) } else { Message::ToggleFolderSelect(sid) };
             let folder_item: Element<Message> = mouse_area(folder_container)
                 .on_press(Message::DragPotential(crate::app::DragItem::Folder(sid)))
                 .on_release(release_msg)
-                .on_right_press(if is_dragging { Message::DragEnd } else { Message::ToggleContextMenu(ContextMenu::Tag(sid)) })
+                .on_right_press(if is_dragging { Message::DragEnd(false) } else { Message::ToggleContextMenu(ContextMenu::Tag(sid)) })
                 .on_enter(Message::HoverItem(Some(sid)))
                 .into();
             items.push(folder_item);

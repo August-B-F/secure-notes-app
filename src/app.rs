@@ -33,6 +33,9 @@ pub enum ActiveView {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditorSubmenu { Format, Paragraph, Insert, TextColor }
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ContextMenu {
     Tag(Uuid),
     NoteItem(Uuid),
@@ -130,6 +133,7 @@ pub struct WindowState {
     pub color_submenu_is_folder: bool,
     pub move_submenu_for: Option<Uuid>,
     pub new_note_submenu_for: Option<Uuid>,
+    pub editor_submenu: Option<EditorSubmenu>,
     pub toolbar_move_open: bool,
     pub window_size: (f32, f32),
     pub resizing: Option<ResizeEdge>,
@@ -170,6 +174,7 @@ pub struct WindowState {
     pub color_hue: f32,
     pub color_sat: f32,
     pub color_lit: f32,
+    pub text_color_selection: Option<((usize, usize), (usize, usize))>,
     pub create_dialog_folder: Option<Uuid>,
     pub show_graph: bool,
     pub show_settings: bool,
@@ -210,6 +215,7 @@ impl WindowState {
             color_submenu_is_folder: false,
             move_submenu_for: None,
             new_note_submenu_for: None,
+            editor_submenu: None,
             toolbar_move_open: false,
             window_size: (1100.0, 700.0),
             resizing: None,
@@ -250,6 +256,7 @@ impl WindowState {
             color_hue: 140.0,
             color_sat: 70.0,
             color_lit: 50.0,
+            text_color_selection: None,
             create_dialog_folder: None,
             show_graph: false,
             show_settings: false,
@@ -363,6 +370,13 @@ pub enum Message {
     FormatTextColor(String),
     OpenTextColorPicker,
     ApplyTextColor,
+    FormatLink,
+    FormatRemoveLink,
+    FormatRemove,
+    FormatAlignLeft,
+    FormatAlignCenter,
+    FormatAlignRight,
+    OpenEditorSubmenu(EditorSubmenu),
 
     LineClicked(usize),
     LineRightClicked(usize),
@@ -416,7 +430,7 @@ pub enum Message {
 
     ToggleExpandFolder(Uuid),
     DragStart(DragItem),
-    DragEnd,
+    DragEnd(bool), // true if a widget captured the click
     DragPotential(DragItem),  // mouse down — might become drag
     DropOnFolder(DragItem, Option<Uuid>),   // move/reparent
     ReorderDrop(DragItem, Uuid),            // finalize reorder in main panel
@@ -556,6 +570,7 @@ pub struct App {
     color_submenu_is_folder: bool,   // true if color submenu is for a folder
     move_submenu_for: Option<Uuid>,  // note/folder ID when move submenu is open
     new_note_submenu_for: Option<Uuid>, // folder ID when "New" submenu is open
+    editor_submenu: Option<EditorSubmenu>,
     toolbar_move_open: bool,        // move picker dropdown from editor toolbar
     window_size: (f32, f32),         // current window size
     resizing: Option<ResizeEdge>,    // active resize edge/corner
@@ -619,6 +634,7 @@ pub struct App {
     color_hue: f32,
     color_sat: f32,
     color_lit: f32,
+    text_color_selection: Option<((usize, usize), (usize, usize))>,
     create_dialog_folder: Option<Uuid>,
 
     show_graph: bool,
@@ -725,6 +741,7 @@ impl App {
             color_submenu_is_folder: false,
             move_submenu_for: None,
             new_note_submenu_for: None,
+            editor_submenu: None,
             toolbar_move_open: false,
             window_size: (1100.0, 700.0),
             resizing: None,
@@ -781,6 +798,7 @@ impl App {
             color_hue: 140.0,
             color_sat: 70.0,
             color_lit: 50.0,
+            text_color_selection: None,
             create_dialog_folder: None,
             show_graph: false,
             show_settings: false,
@@ -854,7 +872,7 @@ impl App {
                     Some(Message::CursorMoved(wid, position.x, position.y))
                 }
                 iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
-                    Some(Message::DragEnd)
+                    Some(Message::DragEnd(_status == iced::event::Status::Captured))
                 }
                 iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(mods)) => {
                     Some(Message::ModifiersChanged(mods.control(), mods.shift(), mods.alt()))
@@ -931,14 +949,14 @@ impl App {
             | Message::AutoSaveTick(_) | Message::CursorMoved(_, _, _)
             | Message::CanvasCloseCtxMenu | Message::SetNoteColor(_, _) | Message::SetFolderColor(_, _)
             | Message::ToggleColorSubmenu(_) | Message::ToggleFolderColorSubmenu(_) | Message::OpenMoveFolderPicker(_) | Message::ColorPickerHue(_)
-            | Message::OpenColorSubmenu(_) | Message::OpenFolderColorSubmenu(_) | Message::OpenMoveSubmenu(_) | Message::OpenNewNoteSubmenu(_) | Message::ToggleNewNoteSubmenu(_) | Message::CloseSubmenus
+            | Message::OpenColorSubmenu(_) | Message::OpenFolderColorSubmenu(_) | Message::OpenMoveSubmenu(_) | Message::OpenNewNoteSubmenu(_) | Message::ToggleNewNoteSubmenu(_) | Message::OpenEditorSubmenu(_) | Message::CloseSubmenus
             | Message::ColorPickerSat(_) | Message::ColorPickerLit(_)
             | Message::ColorPickerSVChanged(_, _) | Message::ColorPickerPreset(_)
             | Message::RenameNoteChanged(_) | Message::RenameNoteSubmit
             | Message::RenameFolderChanged(_) | Message::RenameFolderSubmit
             | Message::CancelRename | Message::NotePasswordInputChanged(_)
             | Message::NotePasswordConfirmChanged(_)
-            | Message::DragStart(_) | Message::DragEnd | Message::DropOnFolder(..)
+            | Message::DragStart(_) | Message::DragEnd(_) | Message::DropOnFolder(..)
             | Message::DragPotential(_) | Message::ReorderDrop(..)
             | Message::ReorderPreview(..) | Message::ReorderToEnd(_)
             | Message::SetSortMode(_) | Message::ToggleSortMenu
@@ -963,7 +981,7 @@ impl App {
             | Message::CanvasAddEdge(_, _, _, _) | Message::CanvasDeleteSelected | Message::CanvasAddNode(_, _) | Message::CanvasAddNodeCenter
             | Message::CanvasUndo | Message::CanvasRedo => {}
             _ => {
-                self.context_menu = None; self.color_submenu_for = None; self.move_submenu_for = None; self.new_note_submenu_for = None; self.toolbar_move_open = false; self.potential_drag = None; self.hovered_item = None;
+                self.context_menu = None; self.color_submenu_for = None; self.move_submenu_for = None; self.new_note_submenu_for = None; self.editor_submenu = None; self.toolbar_move_open = false; self.potential_drag = None; self.hovered_item = None;
                 // auto-submit active rename on unrelated actions
                 let should_submit = match &message {
                     Message::SelectNote(id) => self.renaming_note != Some(*id),
@@ -1233,6 +1251,10 @@ impl App {
                 save_task
             }
             Message::SelectNote(id) => {
+                // Ignore note selection if we're in the middle of a text drag-select in the editor
+                if self.line_editor.is_dragging {
+                    return Task::none();
+                }
                 if let Some(ren_id) = self.renaming_note {
                     if ren_id != id {
                         let task = self.update(Message::RenameNoteSubmit);
@@ -1680,7 +1702,6 @@ impl App {
                     ActiveView::Folder(id) => Some(*id),
                     _ => None,
                 });
-                if parent_id.is_none() { return Task::none(); }
                 let color = parent_id.and_then(|pid| self.folders.iter().find(|f| f.id == pid)).map(|f| f.color).unwrap_or(FolderColor::Blue);
                 let mut folder = Folder::new(String::from("New folder"), color, parent_id);
                 let folder_id = folder.id;
@@ -2090,20 +2111,35 @@ impl App {
 
                                 state.push_undo();
                                 if !prefix.is_empty() && has_content {
-                                    let new_prefix = if trimmed.chars().next().map_or(false, |c| c.is_ascii_digit()) {
-                                        if let Some(dot_pos) = trimmed.find(". ") {
-                                            let num: u32 = trimmed[..dot_pos].parse().unwrap_or(0);
-                                            format!("{}{}. ", leading, num + 1)
+                                    let (_cl, cc) = state.cursor;
+                                    let byte_col = crate::ui::md_widget::char_to_byte(&line, cc);
+                                    let leading_len = line.len() - trimmed.len();
+                                    let prefix_byte_end = leading_len + prefix.len();
+                                    let at_line_start = byte_col <= prefix_byte_end;
+
+                                    if at_line_start {
+                                        // Cursor is at or before the prefix: insert blank line above, keep current line intact
+                                        state.lines.insert(_cl, String::new());
+                                        state.cursor = (_cl + 1, cc);
+                                    } else {
+                                        let new_prefix = if trimmed.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                                            if let Some(dot_pos) = trimmed.find(". ") {
+                                                let num: u32 = trimmed[..dot_pos].parse().unwrap_or(0);
+                                                format!("{}{}. ", leading, num + 1)
+                                            } else {
+                                                format!("{}{}", leading, prefix)
+                                            }
                                         } else {
                                             format!("{}{}", leading, prefix)
-                                        }
-                                    } else {
-                                        format!("{}{}", leading, prefix)
-                                    };
-                                    state.insert_newline();
-                                    let new_line = state.cursor.0;
-                                    state.lines[new_line] = new_prefix.clone();
-                                    state.cursor.1 = new_prefix.chars().count();
+                                        };
+                                        state.insert_newline();
+                                        let new_line = state.cursor.0;
+                                        let rest = state.lines[new_line].clone();
+                                        state.lines[new_line] = format!("{}{}", new_prefix, rest);
+                                        state.cursor.1 = new_prefix.chars().count();
+                                    }
+                                    // Renumber subsequent list items
+                                    renumber_list(state, state.cursor.0);
                                 } else if !prefix.is_empty() && !has_content {
                                     // empty list item: clear prefix instead of continuing
                                     state.lines[cl] = String::new();
@@ -2127,6 +2163,7 @@ impl App {
                             });
                             if state.lines.is_empty() { state.lines.push(String::new()); }
                             if state.cursor.0 >= state.lines.len() { state.cursor.0 = state.lines.len() - 1; }
+                            renumber_list(state, state.cursor.0);
                             self.editor_dirty = true;
                             self.last_edit_time = Some(Instant::now());
                         } else {
@@ -2212,6 +2249,7 @@ impl App {
                         } else {
                             state.push_undo();
                             state.backspace();
+                            renumber_list(state, state.cursor.0);
                             self.editor_dirty = true;
                             self.last_edit_time = Some(Instant::now());
                             let (line_idx, _) = state.cursor;
@@ -2424,6 +2462,9 @@ impl App {
                         state.scroll_offset = (state.scroll_offset - delta * 0.7).max(0.0).min(max_scroll);
                         state.scroll_velocity += delta * 0.3;
                         state.scroll_velocity = state.scroll_velocity.clamp(-80.0, 80.0);
+                    }
+                    MdAction::OpenLink(url) => {
+                        let _ = open::that(&url);
                     }
                     MdAction::ToggleCheckbox(line_idx) => {
                         if line_idx < state.lines.len() {
@@ -2796,7 +2837,6 @@ impl App {
                         for (_, sns) in &mut self.subfolder_notes {
                             for p in sns { if p.id == nid { p.snippet = snippet.clone(); p.modified_at = now; break; } }
                         }
-                        self.apply_sort();
                     }
                 }
                 Task::none()
@@ -2819,7 +2859,63 @@ impl App {
             Message::FormatCheckbox => { self.toggle_line_prefix("- [ ] "); Task::none() }
             Message::FormatCode => { self.insert_markers("`"); Task::none() }
             Message::FormatDivider => { self.insert_at_cursor("\n---\n"); Task::none() }
+            Message::FormatLink => {
+                self.active_editor_mut().push_undo();
+                let editor = self.active_editor_mut();
+                if let Some(sel_text) = editor.selected_text() {
+                    editor.delete_selection();
+                    editor.insert_text(&format!("[{}](url)", sel_text));
+                } else {
+                    editor.insert_text("[link text](url)");
+                }
+                self.editor_dirty = true;
+                self.last_edit_time = Some(Instant::now());
+                Task::none()
+            }
+            Message::FormatRemoveLink => {
+                self.active_editor_mut().push_undo();
+                let editor = self.active_editor_mut();
+                let (cl, _) = editor.cursor;
+                if cl < editor.lines.len() {
+                    let line = editor.lines[cl].clone();
+                    // Replace all [text](url) with just text
+                    let mut result = String::new();
+                    let chars: Vec<char> = line.chars().collect();
+                    let mut i = 0;
+                    while i < chars.len() {
+                        if chars[i] == '[' {
+                            if let Some(bracket_end) = chars[i + 1..].iter().position(|c| *c == ']').map(|p| i + 1 + p) {
+                                if bracket_end + 1 < chars.len() && chars[bracket_end + 1] == '(' {
+                                    if let Some(paren_end) = chars[bracket_end + 2..].iter().position(|c| *c == ')').map(|p| bracket_end + 2 + p) {
+                                        let link_text: String = chars[i + 1..bracket_end].iter().collect();
+                                        result.push_str(&link_text);
+                                        i = paren_end + 1;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                        result.push(chars[i]);
+                        i += 1;
+                    }
+                    editor.lines[cl] = result;
+                    self.editor_dirty = true;
+                    self.last_edit_time = Some(Instant::now());
+                }
+                Task::none()
+            }
+            Message::FormatAlignLeft => { self.set_line_alignment(""); Task::none() }
+            Message::FormatAlignCenter => { self.set_line_alignment("{center}"); Task::none() }
+            Message::FormatAlignRight => { self.set_line_alignment("{right}"); Task::none() }
+            Message::OpenEditorSubmenu(sub) => {
+                if matches!(sub, EditorSubmenu::TextColor) {
+                    self.text_color_selection = self.line_editor.selection_ordered();
+                }
+                self.editor_submenu = Some(sub);
+                Task::none()
+            }
             Message::OpenTextColorPicker => {
+                self.text_color_selection = self.line_editor.selection_ordered();
                 self.active_dialog = Some(DialogKind::TextColor);
                 Task::none()
             }
@@ -2827,11 +2923,12 @@ impl App {
                 let h = self.color_hue;
                 let s = self.color_sat;
                 let l = self.color_lit;
-                let color_code = format!("{:.0},{:.0},{:.0}", h, s * 100.0, l * 100.0);
+                let color_code = format!("{:.0},{:.0},{:.0}", h, s, l);
                 self.active_dialog = None;
                 return self.update(Message::FormatTextColor(color_code));
             }
             Message::FormatTextColor(color_code) => {
+                self.line_editor.push_undo();
                 use crate::ui::md_widget::ColorRange;
                 if let Some((start, end)) = self.line_editor.selection_ordered() {
                     if start.0 == end.0 {
@@ -2859,6 +2956,32 @@ impl App {
                 Task::none()
             }
             Message::FormatQuote => { self.toggle_line_prefix("> "); Task::none() }
+            Message::FormatRemove => {
+                let editor = self.active_editor_mut();
+                editor.push_undo();
+                if let Some((start, end)) = editor.selection_ordered() {
+                    for li in start.0..=end.0.min(editor.lines.len() - 1) {
+                        let line = &editor.lines[li];
+                        let stripped = strip_all_formatting(line);
+                        editor.lines[li] = stripped;
+                    }
+                    // Remove color ranges for affected lines
+                    let colors = &mut editor.colors;
+                    colors.retain(|c| c.line < start.0 || c.line > end.0);
+                    editor.selection = None;
+                } else {
+                    // No selection: strip current line
+                    let li = editor.cursor.0;
+                    if li < editor.lines.len() {
+                        let stripped = strip_all_formatting(&editor.lines[li]);
+                        editor.lines[li] = stripped;
+                        editor.colors.retain(|c| c.line != li);
+                    }
+                }
+                self.editor_dirty = true;
+                self.last_edit_time = Some(Instant::now());
+                Task::none()
+            }
 
             Message::ToggleSearchCaseSensitive => {
                 self.editor_search_case_sensitive = !self.editor_search_case_sensitive;
@@ -3339,13 +3462,13 @@ impl App {
                 self.hovered_item = None;
                 Task::none()
             }
-            Message::DragEnd => {
+            Message::DragEnd(captured) => {
                 if self.resizing.is_some() {
                     self.resizing = None;
                     return Task::none();
                 }
                 if self.dragging.is_none() && self.potential_drag.is_none() {
-                    if self.rename_pending == 0 {
+                    if self.rename_pending == 0 && !captured {
                         if self.renaming_note.is_some() {
                             return self.update(Message::RenameNoteSubmit);
                         }
@@ -4430,7 +4553,7 @@ impl App {
         let title_bar = mouse_area(
             container(
                 row![
-                    iced::widget::image(iced::widget::image::Handle::from_path("assets/logo.png")).width(16).height(16),
+                    iced::widget::image(iced::widget::image::Handle::from_bytes(include_bytes!("../assets/logo.png").to_vec())).width(16).height(16),
                     Space::with_width(Length::Fill),
                     container(Space::new(16, 16)).padding([4, 6]),
                     Space::with_width(8),
@@ -4484,7 +4607,7 @@ impl App {
         let title_bar = mouse_area(
             container(
                 row![
-                    iced::widget::image(iced::widget::image::Handle::from_path("assets/logo.png")).width(16).height(16),
+                    iced::widget::image(iced::widget::image::Handle::from_bytes(include_bytes!("../assets/logo.png").to_vec())).width(16).height(16),
                     Space::with_width(Length::Fill),
                     lock_btn,
                     Space::with_width(8),
@@ -4861,6 +4984,7 @@ impl App {
                     ctx_btn(icons::note_text_icon(theme::TEXT_SECONDARY), "New text note", Message::CreateQuickNote(NoteType::Text)),
                     ctx_btn(icons::note_password_icon(theme::TEXT_SECONDARY), "New password", Message::CreateQuickNote(NoteType::Password)),
                     ctx_btn(icons::note_canvas_icon(theme::TEXT_SECONDARY), "New canvas", Message::CreateQuickNote(NoteType::Canvas)),
+                    ctx_btn(icons::folder_icon(), "New folder", Message::CreateQuickFolder(None)),
                 ].spacing(1).padding(4))
                 .style(theme::context_menu_container)
                 .max_width(170)
@@ -4886,16 +5010,13 @@ impl App {
             }
             ContextMenu::EditorFormat => {
                 container(column![
-                    ctx_btn(icons::fmt_bold(), "Bold", Message::FormatBold),
-                    ctx_btn(icons::fmt_heading(), "Heading", Message::FormatHeading),
-                    ctx_btn(icons::fmt_list(), "List", Message::FormatList),
-                    ctx_btn(icons::fmt_checkbox(), "Checkbox", Message::FormatCheckbox),
-                    ctx_btn(icons::fmt_code(), "Code", Message::FormatCode),
-                    ctx_btn(icons::fmt_divider(), "Divider", Message::FormatDivider),
-                    ctx_btn(icons::palette_icon(), "Text color", Message::OpenTextColorPicker),
+                    ctx_btn_hover(icons::fmt_bold(), "Format  \u{203A}", Message::OpenEditorSubmenu(EditorSubmenu::Format), Message::OpenEditorSubmenu(EditorSubmenu::Format)),
+                    ctx_btn_hover(icons::fmt_align_left(), "Paragraph  \u{203A}", Message::OpenEditorSubmenu(EditorSubmenu::Paragraph), Message::OpenEditorSubmenu(EditorSubmenu::Paragraph)),
+                    ctx_btn_hover(icons::fmt_link(), "Insert  \u{203A}", Message::OpenEditorSubmenu(EditorSubmenu::Insert), Message::OpenEditorSubmenu(EditorSubmenu::Insert)),
+                    ctx_btn_hover(icons::palette_icon(), "Text color  \u{203A}", Message::OpenEditorSubmenu(EditorSubmenu::TextColor), Message::OpenEditorSubmenu(EditorSubmenu::TextColor)),
                 ].spacing(1).padding(4))
                 .style(theme::context_menu_container)
-                .max_width(200)
+                .max_width(180)
                 .into()
             }
             ContextMenu::FileMenu(line_idx) => {
@@ -4957,9 +5078,9 @@ impl App {
             ContextMenu::Tag(_) => 6,
             ContextMenu::NoteItem(_) => 7, // may have extra file buttons
             ContextMenu::NoteColor(_) => 7,
-            ContextMenu::TagsEmpty => 3,
+            ContextMenu::TagsEmpty => 4,
             ContextMenu::NotesEmpty => 4,
-            ContextMenu::EditorFormat => 7,
+            ContextMenu::EditorFormat => 4,
             ContextMenu::ImageMenu(_) => 2,
             ContextMenu::FileMenu(_) => 2,
             ContextMenu::TableCell(_) => 5,
@@ -5057,6 +5178,50 @@ impl App {
             .width(180)
             .max_height(300)
             .into())
+        } else if let Some(ref sub) = self.editor_submenu {
+            match sub {
+                EditorSubmenu::TextColor => {
+                    use crate::ui::color_picker;
+                    let picker = color_picker::view(self.color_hue, self.color_sat, self.color_lit, Message::ColorPickerHue, Message::ColorPickerSat, Message::ColorPickerLit);
+                    Some(container(
+                        column![
+                            picker,
+                        ].spacing(8).padding(12)
+                    )
+                    .style(theme::context_menu_container)
+                    .width(240)
+                    .into())
+                }
+                _ => {
+                    let items = match sub {
+                        EditorSubmenu::Format => column![
+                            ctx_btn(icons::fmt_bold(), "Bold", Message::FormatBold),
+                            ctx_btn(icons::fmt_italic(), "Italic", Message::FormatItalic),
+                            ctx_btn(icons::fmt_heading(), "Heading", Message::FormatHeading),
+                            ctx_btn(icons::fmt_code(), "Code", Message::FormatCode),
+                            ctx_btn(icons::fmt_divider(), "Divider", Message::FormatDivider),
+                            ctx_btn(icons::fmt_clear(), "Clear formatting", Message::FormatRemove),
+                        ].spacing(1),
+                        EditorSubmenu::Paragraph => column![
+                            ctx_btn(icons::fmt_list(), "Bullet list", Message::FormatList),
+                            ctx_btn(icons::fmt_checkbox(), "Checkbox", Message::FormatCheckbox),
+                            ctx_btn(icons::fmt_align_left(), "Align left", Message::FormatAlignLeft),
+                            ctx_btn(icons::fmt_align_center(), "Align center", Message::FormatAlignCenter),
+                            ctx_btn(icons::fmt_align_right(), "Align right", Message::FormatAlignRight),
+                        ].spacing(1),
+                        EditorSubmenu::Insert => column![
+                            ctx_btn(icons::fmt_link(), "Link", Message::FormatLink),
+                            ctx_btn(icons::fmt_unlink(), "Remove link", Message::FormatRemoveLink),
+                            ctx_btn(icons::fmt_divider(), "Divider", Message::FormatDivider),
+                        ].spacing(1),
+                        EditorSubmenu::TextColor => unreachable!(),
+                    };
+                    Some(container(items.padding(4))
+                        .style(theme::context_menu_container)
+                        .width(170)
+                        .into())
+                }
+            }
         } else {
             None
         };
@@ -5120,12 +5285,8 @@ impl App {
                         Space::with_height(8),
                         picker,
                         Space::with_height(8),
-                        row![
-                            button(text("Cancel").size(13).align_x(Horizontal::Center).width(Length::Fill))
-                                .on_press(Message::CloseDialog).style(theme::secondary_button).padding([8, 16]).width(Length::Fill),
-                            button(text("Apply").size(13).align_x(Horizontal::Center).width(Length::Fill))
-                                .on_press(Message::ApplyTextColor).style(theme::submit_button).padding([8, 16]).width(Length::Fill),
-                        ].spacing(8),
+                        button(text("Close").size(13).align_x(Horizontal::Center).width(Length::Fill))
+                            .on_press(Message::CloseDialog).style(theme::secondary_button).padding([8, 16]).width(Length::Fill),
                     ].spacing(4).padding(20),
                 ).style(theme::dialog_card).width(320);
                 container(card).style(theme::dialog_overlay).width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into()
@@ -5276,36 +5437,25 @@ impl App {
     }
 
     fn window_controls(&self) -> Element<'_, Message> {
-        let h = self.window_controls_hovered;
-        let min_content: Element<Message> = if h {
-            svg(icons::win_minimize()).width(8).height(8).into()
-        } else {
-            Space::new(12, 12).into()
-        };
-        let max_content: Element<Message> = if h {
-            svg(icons::win_maximize()).width(8).height(8).into()
-        } else {
-            Space::new(12, 12).into()
-        };
-        let close_content: Element<Message> = if h {
-            svg(icons::win_close()).width(8).height(8).into()
-        } else {
-            Space::new(12, 12).into()
-        };
-        let p = if h { 2 } else { 0 };
         let controls = row![
-            button(min_content).on_press(Message::WindowMinimize)
-                .style(theme::color_dot_button(iced::Color::from_rgb8(0xE5, 0xD5, 0x4D), false)).padding(p),
-            button(max_content).on_press(Message::WindowMaximize)
-                .style(theme::color_dot_button(iced::Color::from_rgb8(0x4D, 0xC8, 0x6A), false)).padding(p),
-            button(close_content).on_press(Message::WindowClose)
-                .style(theme::color_dot_button(iced::Color::from_rgb8(0xE5, 0x4D, 0x4D), false)).padding(p),
-        ].spacing(8).align_y(iced::Alignment::Center);
+            button(svg(icons::win_minimize()).width(16).height(16)
+                .style(theme::svg_hover_color(iced::Color::from_rgb8(0xE5, 0xD5, 0x4D))))
+                .on_press(Message::WindowMinimize)
+                .style(theme::transparent_button)
+                .padding([4, 6]),
+            button(svg(icons::win_maximize()).width(16).height(16)
+                .style(theme::svg_hover_color(iced::Color::from_rgb8(0x4D, 0xC8, 0x6A))))
+                .on_press(Message::WindowMaximize)
+                .style(theme::transparent_button)
+                .padding([4, 6]),
+            button(svg(icons::win_close()).width(16).height(16)
+                .style(theme::svg_hover_color(iced::Color::from_rgb8(0xE5, 0x4D, 0x4D))))
+                .on_press(Message::WindowClose)
+                .style(theme::transparent_button)
+                .padding([4, 6]),
+        ].spacing(4).align_y(iced::Alignment::Center);
 
-        mouse_area(controls)
-            .on_enter(Message::WindowControlsHover(true))
-            .on_exit(Message::WindowControlsHover(false))
-            .into()
+        controls.into()
     }
 
 
@@ -5374,6 +5524,7 @@ impl App {
     }
 
     fn insert_markers(&mut self, marker: &str) {
+        self.active_editor_mut().push_undo();
         let editor = self.active_editor_mut();
         if let Some((start, end)) = editor.selection_ordered() {
             if start.0 != end.0 {
@@ -5420,6 +5571,7 @@ impl App {
 
     /// Toggle a line-prefix marker — applies to all selected lines.
     fn toggle_line_prefix(&mut self, prefix: &str) {
+        self.active_editor_mut().push_undo();
         let prefix_chars = prefix.chars().count();
         let editor = self.active_editor_mut();
         let (start_line, end_line) = if let Some((start, end)) = editor.selection_ordered() {
@@ -5450,8 +5602,28 @@ impl App {
         self.last_edit_time = Some(Instant::now());
     }
 
+    /// Set line alignment tag. `tag` is "" for left, "{center}" or "{right}".
+    fn set_line_alignment(&mut self, tag: &str) {
+        self.active_editor_mut().push_undo();
+        let editor = self.active_editor_mut();
+        let (cl, _) = editor.cursor;
+        if cl < editor.lines.len() {
+            let line = &editor.lines[cl];
+            // Strip any existing alignment tag
+            let stripped = line.trim_start_matches("{center}").trim_start_matches("{right}");
+            if tag.is_empty() {
+                editor.lines[cl] = stripped.to_string();
+            } else {
+                editor.lines[cl] = format!("{}{}", tag, stripped);
+            }
+            self.editor_dirty = true;
+            self.last_edit_time = Some(Instant::now());
+        }
+    }
+
     /// Insert text at cursor position.
     fn insert_at_cursor(&mut self, text: &str) {
+        self.line_editor.push_undo();
         self.line_editor.insert_text(text);
         self.editor_dirty = true;
         self.last_edit_time = Some(Instant::now());
@@ -5484,7 +5656,8 @@ impl App {
                         SortMode::Created => a.modified_at.cmp(&b.modified_at),
                         SortMode::NameAZ => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
                         SortMode::NameZA => b.title.to_lowercase().cmp(&a.title.to_lowercase()),
-                        SortMode::Type => format!("{:?}", a.note_type).cmp(&format!("{:?}", b.note_type)),
+                        SortMode::Type => format!("{:?}", a.note_type).cmp(&format!("{:?}", b.note_type))
+                            .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
                     },
                     other => other,
                 }
@@ -5578,6 +5751,7 @@ impl App {
             color_submenu_is_folder: std::mem::replace(&mut self.color_submenu_is_folder, false),
             move_submenu_for: self.move_submenu_for.take(),
             new_note_submenu_for: self.new_note_submenu_for.take(),
+            editor_submenu: self.editor_submenu.take(),
             toolbar_move_open: std::mem::replace(&mut self.toolbar_move_open, false),
             window_size: std::mem::replace(&mut self.window_size, (1100.0, 700.0)),
             resizing: self.resizing.take(),
@@ -5618,6 +5792,7 @@ impl App {
             color_hue: std::mem::replace(&mut self.color_hue, 140.0),
             color_sat: std::mem::replace(&mut self.color_sat, 70.0),
             color_lit: std::mem::replace(&mut self.color_lit, 50.0),
+            text_color_selection: self.text_color_selection.take(),
             create_dialog_folder: self.create_dialog_folder.take(),
             show_graph: std::mem::replace(&mut self.show_graph, false),
             show_settings: std::mem::replace(&mut self.show_settings, false),
@@ -5657,6 +5832,7 @@ impl App {
         self.color_submenu_is_folder = ws.color_submenu_is_folder;
         self.move_submenu_for = ws.move_submenu_for;
         self.new_note_submenu_for = ws.new_note_submenu_for;
+        self.editor_submenu = ws.editor_submenu;
         self.toolbar_move_open = ws.toolbar_move_open;
         self.window_size = ws.window_size;
         self.resizing = ws.resizing;
@@ -5697,6 +5873,7 @@ impl App {
         self.color_hue = ws.color_hue;
         self.color_sat = ws.color_sat;
         self.color_lit = ws.color_lit;
+        self.text_color_selection = ws.text_color_selection;
         self.create_dialog_folder = ws.create_dialog_folder;
         self.show_graph = ws.show_graph;
         self.show_settings = ws.show_settings;
@@ -5774,7 +5951,7 @@ impl App {
                 let title_bar = mouse_area(
                     container(
                         row![
-                            iced::widget::image(iced::widget::image::Handle::from_path("assets/logo.png")).width(16).height(16),
+                            iced::widget::image(iced::widget::image::Handle::from_bytes(include_bytes!("../assets/logo.png").to_vec())).width(16).height(16),
                             Space::with_width(Length::Fill),
                             lock_btn,
                             Space::with_width(8),
@@ -6110,6 +6287,36 @@ fn migrate_body_images(body: &str) -> (String, Vec<(String, String, String)>) {
 
 impl App {
     fn auto_apply_color(&mut self) -> Task<Message> {
+        // Auto-apply text color when text color picker is open
+        let is_text_color = matches!(self.editor_submenu, Some(EditorSubmenu::TextColor))
+            || matches!(self.active_dialog, Some(DialogKind::TextColor));
+        if is_text_color {
+            if let Some((start, end)) = self.text_color_selection {
+                let h = self.color_hue;
+                let s = self.color_sat;
+                let l = self.color_lit;
+                let color_code = format!("{:.0},{:.0},{:.0}", h, s, l);
+                use crate::ui::md_widget::ColorRange;
+                if start.0 == end.0 {
+                    self.line_editor.colors.retain(|c| !(c.line == start.0 && c.start_col == start.1 && c.end_col == end.1));
+                    self.line_editor.colors.push(ColorRange {
+                        line: start.0, start_col: start.1, end_col: end.1, color: color_code,
+                    });
+                } else {
+                    for li in start.0..=end.0 {
+                        let sc = if li == start.0 { start.1 } else { 0 };
+                        let ec = if li == end.0 { end.1 } else { self.line_editor.lines[li].chars().count() };
+                        self.line_editor.colors.retain(|c| !(c.line == li && c.start_col == sc && c.end_col == ec));
+                        self.line_editor.colors.push(ColorRange {
+                            line: li, start_col: sc, end_col: ec, color: color_code.clone(),
+                        });
+                    }
+                }
+                self.editor_dirty = true;
+                self.last_edit_time = Some(std::time::Instant::now());
+            }
+            return Task::none();
+        }
         if let Some(ref card_id) = self.canvas_color_editing {
             let c = crate::ui::color_picker::hsv_to_rgb(self.color_hue, self.color_sat / 100.0, self.color_lit / 100.0);
             let hex = format!("#{:02X}{:02X}{:02X}", (c.r * 255.0) as u8, (c.g * 255.0) as u8, (c.b * 255.0) as u8);
@@ -6154,6 +6361,108 @@ impl App {
             }, |_| Message::None);
         }
         Task::none()
+    }
+}
+
+/// Strip all inline formatting from a line: bold, italic, code, color tags, links.
+fn strip_all_formatting(line: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = line.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    while i < len {
+        // Color tags: {c:...}text{/c} → text
+        if i + 3 < len && chars[i] == '{' && chars[i + 1] == 'c' && chars[i + 2] == ':' {
+            if let Some(tag_end) = chars[i + 3..].iter().position(|c| *c == '}').map(|p| i + 3 + p) {
+                let remaining: String = chars[tag_end + 1..].iter().collect();
+                if let Some(close_pos) = remaining.find("{/c}") {
+                    let content: String = chars[tag_end + 1..tag_end + 1 + close_pos].iter().collect();
+                    result.push_str(&content);
+                    i = tag_end + 1 + close_pos + 4;
+                    continue;
+                }
+            }
+        }
+        // Bold: **text** → text
+        if i + 1 < len && chars[i] == '*' && chars[i + 1] == '*' {
+            if let Some(end) = chars[i + 2..].windows(2).position(|w| w[0] == '*' && w[1] == '*').map(|p| i + 2 + p) {
+                let content: String = chars[i + 2..end].iter().collect();
+                result.push_str(&content);
+                i = end + 2;
+                continue;
+            }
+        }
+        // Italic: *text* → text (single asterisk, not preceded by another *)
+        if chars[i] == '*' && (i == 0 || chars[i - 1] != '*') && (i + 1 >= len || chars[i + 1] != '*') {
+            if let Some(end) = chars[i + 1..].iter().position(|c| *c == '*').map(|p| i + 1 + p) {
+                if end + 1 >= len || chars[end + 1] != '*' {
+                    let content: String = chars[i + 1..end].iter().collect();
+                    result.push_str(&content);
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+        // Code: `text` → text
+        if chars[i] == '`' {
+            if let Some(end) = chars[i + 1..].iter().position(|c| *c == '`').map(|p| i + 1 + p) {
+                let content: String = chars[i + 1..end].iter().collect();
+                result.push_str(&content);
+                i = end + 1;
+                continue;
+            }
+        }
+        // Links: [text](url) → text
+        if chars[i] == '[' {
+            if let Some(bracket_end) = chars[i + 1..].iter().position(|c| *c == ']').map(|p| i + 1 + p) {
+                if bracket_end + 1 < len && chars[bracket_end + 1] == '(' {
+                    if let Some(paren_end) = chars[bracket_end + 2..].iter().position(|c| *c == ')').map(|p| bracket_end + 2 + p) {
+                        let content: String = chars[i + 1..bracket_end].iter().collect();
+                        result.push_str(&content);
+                        i = paren_end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
+}
+
+/// Re-number consecutive numbered list items starting from `from_line`.
+/// Walks backward to find the first item in the run, then renumbers forward.
+fn renumber_list(state: &mut crate::ui::md_widget::MdEditorState, from_line: usize) {
+    fn is_numbered(line: &str) -> Option<(String, usize)> {
+        let trimmed = line.trim_start();
+        let leading = &line[..line.len() - trimmed.len()];
+        if let Some(dot_pos) = trimmed.find(". ") {
+            let num_str = &trimmed[..dot_pos];
+            if !num_str.is_empty() && num_str.chars().all(|c| c.is_ascii_digit()) {
+                return Some((leading.to_string(), dot_pos));
+            }
+        }
+        None
+    }
+    // Walk backward to find the start of the numbered list run
+    let mut start = from_line;
+    while start > 0 {
+        if is_numbered(&state.lines[start - 1]).is_some() { start -= 1; } else { break; }
+    }
+    // Walk forward and renumber
+    let mut num = 1u32;
+    let mut i = start;
+    while i < state.lines.len() {
+        if let Some((leading, dot_pos)) = is_numbered(&state.lines[i]) {
+            let trimmed = state.lines[i].trim_start();
+            let rest = &trimmed[dot_pos..]; // ". content..."
+            state.lines[i] = format!("{}{}{}", leading, num, rest);
+            num += 1;
+            i += 1;
+        } else {
+            break;
+        }
     }
 }
 
@@ -6475,6 +6784,9 @@ fn handle_md_action(state: &mut crate::ui::md_widget::MdEditorState, action: cra
             state.scroll_velocity = state.scroll_velocity.clamp(-80.0, 80.0);
         }
         MdAction::RightClick => {}
+        MdAction::OpenLink(url) => {
+            let _ = open::that(&url);
+        }
         MdAction::FileExport(_, _) | MdAction::FileDelete(_) => {} // handled by MdEdit handler
         _ => {} // Slash menu, code blocks, images, etc.
     }

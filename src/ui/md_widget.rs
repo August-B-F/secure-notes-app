@@ -597,6 +597,7 @@ pub enum MdAction {
     CodeLangSelect(usize, String), // set language for code block at line
     FileExport(String, String), // (file_id, filename) — export attached file
     FileDelete(String), // file_id — delete attached file
+    OpenLink(String), // open URL in browser
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -849,18 +850,24 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                 let is_file = trimmed.starts_with("[file:") && trimmed.ends_with(']');
                 if is_table_sep { 1.0 } else if is_file { fs * 3.2 } else {
                     let avail_w = text_bounds.width;
-                    let estimated_w = line.len() as f32 * line_fs * 0.65;
+                    // Measure display text (markers stripped) for accurate wrap height
+                    let (segments, leading_ws) = build_display_segments(line);
+                    let display_text: String = format!("{}{}", leading_ws, segments.iter().map(|s| s.text.as_str()).collect::<String>());
+                    let estimated_w = display_text.len() as f32 * line_fs * 0.65;
                     if line.is_empty() || estimated_w < avail_w {
-                        line_fs * 1.3 // definitely fits on one line
-                    } else {
-                    let text_w = measure_text_width(line, line_fs, line_font);
-                    if text_w > avail_w && avail_w > 0.0 {
-                        let wrap_lines = (text_w / avail_w).ceil().max(1.0);
-                        line_fs * 1.3 * wrap_lines
-                    } else {
                         line_fs * 1.3
+                    } else {
+                        let display_font = if segments.iter().any(|s| s.font.weight == iced::font::Weight::Bold) {
+                            Font { weight: iced::font::Weight::Bold, ..Font::DEFAULT }
+                        } else { Font::DEFAULT };
+                        let text_w = measure_text_width(&display_text, line_fs, display_font);
+                        if text_w > avail_w && avail_w > 0.0 {
+                            let wrap_lines = (text_w / avail_w).ceil().max(1.0);
+                            line_fs * 1.3 * wrap_lines
+                        } else {
+                            line_fs * 1.3
+                        }
                     }
-                    } // end fast-path else
                 }
             };
 
@@ -1199,39 +1206,39 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                 } else if is_cursor_line {
                     TR::fill_text(renderer, iced::advanced::Text {
                         content: line.to_string(),
-                        bounds: Size::new(text_bounds.width - 60.0, actual_h),
+                        bounds: Size::new(text_bounds.width - 60.0, actual_h + fs * 1.3),
                         size: Pixels(fs),
                         line_height: text::LineHeight::Relative(1.3),
                         font: Font::DEFAULT,
                         horizontal_alignment: alignment::Horizontal::Left,
                         vertical_alignment: alignment::Vertical::Top,
                         shaping: text::Shaping::Advanced,
-                        wrapping: text::Wrapping::None,
+                        wrapping: text::Wrapping::WordOrGlyph,
                     }, Point::new(draw_x + 10.0, y), text_color, bounds);
                 } else if is_visible {
                     TR::fill_text(renderer, iced::advanced::Text {
                         content: line.to_string(),
-                        bounds: Size::new(text_bounds.width - 60.0, actual_h),
+                        bounds: Size::new(text_bounds.width - 60.0, actual_h + fs * 1.3),
                         size: Pixels(fs),
                         line_height: text::LineHeight::Relative(1.3),
                         font: Font::DEFAULT,
                         horizontal_alignment: alignment::Horizontal::Left,
                         vertical_alignment: alignment::Vertical::Top,
                         shaping: text::Shaping::Advanced,
-                        wrapping: text::Wrapping::None,
+                        wrapping: text::Wrapping::WordOrGlyph,
                     }, Point::new(draw_x + 10.0, y), text_color, bounds);
                 } else if !line.is_empty() {
                     let dots: String = "\u{2022}".repeat(line.chars().count());
                     TR::fill_text(renderer, iced::advanced::Text {
                         content: dots,
-                        bounds: Size::new(text_bounds.width - 60.0, actual_h),
+                        bounds: Size::new(text_bounds.width - 60.0, actual_h + fs * 1.3),
                         size: Pixels(fs),
                         line_height: text::LineHeight::Relative(1.3),
                         font: Font::DEFAULT,
                         horizontal_alignment: alignment::Horizontal::Left,
                         vertical_alignment: alignment::Vertical::Top,
                         shaping: text::Shaping::Advanced,
-                        wrapping: text::Wrapping::None,
+                        wrapping: text::Wrapping::WordOrGlyph,
                     }, Point::new(draw_x + 10.0, y), text_color, bounds);
                 }
             }
@@ -1463,9 +1470,18 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                     }
                 }
             } else if is_cursor_line || is_selected {
+                // Cursor line shows raw text (with markers visible).
+                // Compute height from raw text width since it may wrap differently than display text.
+                let raw_w = measure_text_width(line, line_fs, line_font);
+                let raw_h = if raw_w > text_bounds.width && text_bounds.width > 0.0 {
+                    let wrap_lines = (raw_w / text_bounds.width).ceil().max(1.0);
+                    line_fs * 1.3 * (wrap_lines + 1.0)
+                } else {
+                    actual_h + line_fs * 1.3
+                };
                 TR::fill_text(renderer, iced::advanced::Text {
                     content: line.to_string(),
-                    bounds: Size::new(text_bounds.width, actual_h),
+                    bounds: Size::new(text_bounds.width, raw_h),
                     size: Pixels(line_fs),
                     line_height: text::LineHeight::Relative(1.3),
                     font: line_font,
@@ -1475,23 +1491,88 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                     wrapping: text::Wrapping::WordOrGlyph,
                 }, Point::new(draw_x, y), text_color, bounds);
             } else {
-                let (segments, leading_ws) = build_display_segments(line);
+                // Detect alignment tags
+                let (align_tag, display_line) = if line.starts_with("{center}") {
+                    (alignment::Horizontal::Center, &line[8..])
+                } else if line.starts_with("{right}") {
+                    (alignment::Horizontal::Right, &line[7..])
+                } else {
+                    (alignment::Horizontal::Left, line.as_str())
+                };
+                let (mut segments, leading_ws) = build_display_segments(display_line);
+                // Apply runtime color ranges (from color picker) to segments
+                if !line_colors.is_empty() {
+                    apply_color_ranges_to_segments(&mut segments, &line_colors);
+                }
                 let display_text: String = format!("{}{}", leading_ws, segments.iter().map(|s| s.text.as_str()).collect::<String>());
                 let display_font = if segments.iter().any(|s| s.font.weight == iced::font::Weight::Bold) {
                     Font { weight: iced::font::Weight::Bold, ..Font::DEFAULT }
                 } else { line_font };
                 let display_color = segments.first().map(|s| s.color).unwrap_or(text_color);
-                TR::fill_text(renderer, iced::advanced::Text {
-                    content: display_text,
-                    bounds: Size::new(text_bounds.width, actual_h),
-                    size: Pixels(line_fs),
-                    line_height: text::LineHeight::Relative(1.3),
-                    font: display_font,
-                    horizontal_alignment: alignment::Horizontal::Left,
-                    vertical_alignment: alignment::Vertical::Top,
-                    shaping: text::Shaping::Advanced,
-                    wrapping: text::Wrapping::WordOrGlyph,
-                }, Point::new(draw_x, y), display_color, bounds);
+                // Extra height buffer for wrapping: prevents clipping last wrap line
+                let render_h = actual_h + line_fs * 1.3;
+
+                // Check if line fits on one visual line — if so, use per-segment rendering
+                // for correct per-word bold/color. Otherwise, fall back to single fill_text
+                // with wrapping (sacrificing per-word styling for correct layout).
+                let total_display_w = measure_text_width(&display_text, line_fs, display_font);
+                let has_mixed_styles = segments.len() > 1 && segments.iter().any(|s|
+                    s.font.weight == iced::font::Weight::Bold
+                    || s.color != segments[0].color);
+                let fits_one_line = total_display_w <= text_bounds.width;
+
+                if has_mixed_styles && fits_one_line {
+                    // Per-segment rendering for correct per-word bold/color (no wrapping needed)
+                    let leading_ws_w = measure_text_width(&leading_ws, line_fs, Font::DEFAULT);
+                    let base_x = match align_tag {
+                        alignment::Horizontal::Center => {
+                            draw_x + (text_bounds.width - total_display_w) / 2.0
+                        }
+                        alignment::Horizontal::Right => {
+                            draw_x + text_bounds.width - total_display_w
+                        }
+                        _ => draw_x,
+                    };
+                    let mut seg_x = base_x + leading_ws_w;
+                    for seg in &segments {
+                        if seg.text.is_empty() { continue; }
+                        let seg_font = if seg.font.weight == iced::font::Weight::Bold {
+                            Font { weight: iced::font::Weight::Bold, ..Font::DEFAULT }
+                        } else { line_font };
+                        let seg_fs = line_fs * seg.size_mult;
+                        let seg_w = measure_text_width(&seg.text, seg_fs, seg_font);
+                        TR::fill_text(renderer, iced::advanced::Text {
+                            content: seg.text.clone(),
+                            bounds: Size::new(seg_w + 1.0, render_h),
+                            size: Pixels(seg_fs),
+                            line_height: text::LineHeight::Relative(1.3),
+                            font: seg_font,
+                            horizontal_alignment: alignment::Horizontal::Left,
+                            vertical_alignment: alignment::Vertical::Top,
+                            shaping: text::Shaping::Advanced,
+                            wrapping: text::Wrapping::None,
+                        }, Point::new(seg_x, y), seg.color, bounds);
+                        seg_x += seg_w;
+                    }
+                } else {
+                    // Wrapping line or single-style: render as one text block
+                    let text_x = match align_tag {
+                        alignment::Horizontal::Center => draw_x + text_bounds.width / 2.0,
+                        alignment::Horizontal::Right => draw_x + text_bounds.width,
+                        _ => draw_x,
+                    };
+                    TR::fill_text(renderer, iced::advanced::Text {
+                        content: display_text,
+                        bounds: Size::new(text_bounds.width, render_h),
+                        size: Pixels(line_fs),
+                        line_height: text::LineHeight::Relative(1.3),
+                        font: display_font,
+                        horizontal_alignment: align_tag,
+                        vertical_alignment: alignment::Vertical::Top,
+                        shaping: text::Shaping::Advanced,
+                        wrapping: text::Wrapping::WordOrGlyph,
+                    }, Point::new(text_x, y), display_color, bounds);
+                }
             }
 
             let is_img_cur = i < image_lines.len() && image_lines[i];
@@ -1503,7 +1584,7 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                 let cursor_color = if visible {
                     Color::from_rgb(0.65, 0.65, 0.68)
                 } else {
-                    Color::TRANSPARENT
+                    Color::from_rgb(0.30, 0.30, 0.32)
                 };
 
                 let pass_block_start = if is_password_block { password_block_range[i].map(|r| r.0) } else { None };
@@ -2034,6 +2115,14 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                                 }
                             }
                         }
+                        // Link click detection on rendered (non-cursor) lines
+                        let is_cursor_line = self.state.focused && click_line == self.state.cursor.0;
+                        if !is_cursor_line && click_line < self.state.lines.len() {
+                            if let Some(url) = detect_link_click(&self.state.lines[click_line], x, self.font_size) {
+                                shell.publish((self.on_edit)(MdAction::OpenLink(url)));
+                                return event::Status::Captured;
+                            }
+                        }
                         if wstate.shift_held {
                             shell.publish((self.on_edit)(MdAction::ShiftClick(x, y)));
                         } else {
@@ -2050,7 +2139,11 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                 if let Some(pos) = cursor.position_in(bounds) {
                     let rx = pos.x - self.padding.left;
                     let ry = pos.y - self.padding.top + self.state.scroll_offset;
-                    shell.publish((self.on_edit)(MdAction::Click(rx, ry)));
+                    // Only move cursor if there is no active selection, so right-click
+                    // preserves selected text for formatting operations.
+                    if self.state.selection.is_none() {
+                        shell.publish((self.on_edit)(MdAction::Click(rx, ry)));
+                    }
                     shell.publish((self.on_edit)(MdAction::Focus));
                     shell.publish((self.on_edit)(MdAction::RightClick));
                     return event::Status::Captured;
@@ -2075,10 +2168,32 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                     }
                 }
                 if wstate.dragging {
-                    if let Some(pos) = cursor.position_in(bounds) {
+                    // Get cursor position relative to bounds, clamping to widget edges
+                    // so drag-select works even when the cursor leaves the editor area.
+                    let pos_opt = cursor.position_in(bounds).or_else(|| {
+                        cursor.position().map(|abs| {
+                            Point::new(
+                                (abs.x - bounds.x).clamp(0.0, bounds.width),
+                                (abs.y - bounds.y).clamp(0.0, bounds.height),
+                            )
+                        })
+                    });
+                    if let Some(pos) = pos_opt {
                         let x = pos.x - self.padding.left;
                         let y = pos.y - self.padding.top + self.state.scroll_offset;
                         shell.publish((self.on_edit)(MdAction::DragTo(x, y)));
+
+                        // Auto-scroll when dragging near the top or bottom edge
+                        let edge_zone = 40.0_f32;
+                        let scroll_speed = self.font_size * 3.0;
+                        if pos.y < edge_zone {
+                            let factor = 1.0 - (pos.y / edge_zone).max(0.0);
+                            shell.publish((self.on_edit)(MdAction::Scroll(scroll_speed * factor)));
+                        } else if pos.y > bounds.height - edge_zone {
+                            let factor = 1.0 - ((bounds.height - pos.y) / edge_zone).max(0.0);
+                            shell.publish((self.on_edit)(MdAction::Scroll(-scroll_speed * factor)));
+                        }
+
                         return event::Status::Captured;
                     }
                 }
@@ -2386,6 +2501,19 @@ fn build_display_segments(line: &str) -> (Vec<TextSegment>, String) {
     } else if trimmed.starts_with("- ") {
         segs.push(TextSegment { text: "•  ".into(), font: Font::DEFAULT, color: text_color, size_mult: 1.0 });
         segs.extend(build_inline_segments(&trimmed[2..], Font::DEFAULT, text_color));
+    } else if trimmed.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        if let Some(dot_pos) = trimmed.find(". ") {
+            let num_str = &trimmed[..dot_pos];
+            if num_str.chars().all(|c| c.is_ascii_digit()) {
+                let marker_color = Color::from_rgb(0.55, 0.55, 0.57);
+                segs.push(TextSegment { text: format!("{}. ", num_str), font: Font::DEFAULT, color: marker_color, size_mult: 1.0 });
+                segs.extend(build_inline_segments(&trimmed[dot_pos + 2..], Font::DEFAULT, text_color));
+            } else {
+                segs.extend(build_inline_segments(trimmed, Font::DEFAULT, text_color));
+            }
+        } else {
+            segs.extend(build_inline_segments(trimmed, Font::DEFAULT, text_color));
+        }
     } else {
         segs.extend(build_inline_segments(trimmed, Font::DEFAULT, text_color));
     }
@@ -2465,6 +2593,29 @@ fn build_inline_segments(text: &str, base_font: Font, base_color: Color) -> Vec<
                 continue;
             }
         }
+        // Links: [text](url) — display only the text in link color
+        if chars[i] == '[' {
+            if let Some(bracket_end) = chars[i + 1..].iter().position(|c| *c == ']').map(|p| i + 1 + p) {
+                if bracket_end + 1 < len && chars[bracket_end + 1] == '(' {
+                    if let Some(paren_end) = chars[bracket_end + 2..].iter().position(|c| *c == ')').map(|p| bracket_end + 2 + p) {
+                        if i > normal_start {
+                            let t: String = chars[normal_start..i].iter().collect();
+                            segs.push(TextSegment { text: t, font: base_font, color: base_color, size_mult: 1.0 });
+                        }
+                        let link_text: String = chars[i + 1..bracket_end].iter().collect();
+                        segs.push(TextSegment {
+                            text: link_text,
+                            font: base_font,
+                            color: Color::from_rgb(0.45, 0.7, 0.9),
+                            size_mult: 1.0,
+                        });
+                        i = paren_end + 1;
+                        normal_start = i;
+                        continue;
+                    }
+                }
+            }
+        }
         i += 1;
     }
 
@@ -2477,6 +2628,52 @@ fn build_inline_segments(text: &str, base_font: Font, base_color: Color) -> Vec<
         segs.push(TextSegment { text: text.to_string(), font: base_font, color: base_color, size_mult: 1.0 });
     }
     segs
+}
+
+/// Detect if a click at `x` on a rendered line hits a link.
+/// Returns `Some(url)` if so.
+fn detect_link_click(line: &str, click_x: f32, font_size: f32) -> Option<String> {
+    let trimmed = line.trim_start();
+    let leading = &line[..line.len() - trimmed.len()];
+    let leading_w = measure_text_width(leading, font_size, Font::DEFAULT);
+
+    // Build display segments to get accurate x-positions
+    let (segments, leading_ws) = build_display_segments(line);
+    let leading_ws_w = measure_text_width(&leading_ws, font_size, Font::DEFAULT);
+    let mut seg_x = leading_ws_w;
+
+    // We need the link URLs from the raw line. Parse links from trimmed content.
+    let mut links: Vec<(f32, f32, String)> = Vec::new(); // (start_x, end_x, url)
+
+    // Walk the display segments and match them to links in the raw text
+    // Display segments for links show just the link text in link color
+    let link_color = Color::from_rgb(0.45, 0.7, 0.9);
+    for seg in &segments {
+        let seg_font = if seg.font.weight == iced::font::Weight::Bold {
+            Font { weight: iced::font::Weight::Bold, ..Font::DEFAULT }
+        } else { Font::DEFAULT };
+        let seg_w = measure_text_width(&seg.text, font_size * seg.size_mult, seg_font);
+        if seg.color.r == link_color.r && seg.color.g == link_color.g && seg.color.b == link_color.b {
+            // This segment is a link — find corresponding URL in raw line
+            let search = format!("[{}](", seg.text);
+            if let Some(start) = trimmed.find(&search) {
+                let url_start = start + search.len();
+                if let Some(paren_end) = trimmed[url_start..].find(')') {
+                    let url = trimmed[url_start..url_start + paren_end].trim().to_string();
+                    links.push((seg_x, seg_x + seg_w, url));
+                }
+            }
+        }
+        seg_x += seg_w;
+    }
+
+    let _ = leading_w; // leading_ws already accounts for visual leading
+    for (start_x, end_x, url) in links {
+        if click_x >= start_x && click_x <= end_x {
+            return Some(url);
+        }
+    }
+    None
 }
 
 /// Find the position of closing ** starting from `start`
@@ -2806,6 +3003,7 @@ fn wrapped_visual_lines(text: &str, fs: f32, font: Font, avail_w: f32) -> usize 
 }
 
 /// Line height accounting for word wrapping at a given width.
+/// Measures DISPLAY text (markers stripped) with the correct font for headings.
 pub fn wrapped_line_height(line: &str, fs: f32, avail_width: f32, image_sizes: &HashMap<String, (f32, f32)>) -> f32 {
     let base_h = actual_line_height(line, fs, image_sizes);
     if avail_width <= 0.0 || line.is_empty() { return base_h; }
@@ -2820,9 +3018,15 @@ pub fn wrapped_line_height(line: &str, fs: f32, avail_width: f32, image_sizes: &
         else if trimmed.starts_with("### ") { fs * 1.3 }
         else if trimmed.starts_with("#### ") { fs * 1.15 }
         else { fs };
-    let estimated_w = line.len() as f32 * line_fs * 0.65;
+    // Build display text (markers stripped) for accurate width measurement
+    let (segments, leading_ws) = build_display_segments(line);
+    let display_text: String = format!("{}{}", leading_ws, segments.iter().map(|s| s.text.as_str()).collect::<String>());
+    let estimated_w = display_text.len() as f32 * line_fs * 0.65;
     if estimated_w <= avail_width { return base_h; }
-    let text_w = measure_text_width(line, line_fs, Font::DEFAULT);
+    let display_font = if segments.iter().any(|s| s.font.weight == iced::font::Weight::Bold) {
+        Font { weight: iced::font::Weight::Bold, ..Font::DEFAULT }
+    } else { Font::DEFAULT };
+    let text_w = measure_text_width(&display_text, line_fs, display_font);
     if text_w <= avail_width { return base_h; }
     let wrap_lines = (text_w / avail_width).ceil().max(1.0);
     line_fs * 1.3 * wrap_lines
@@ -3093,7 +3297,7 @@ fn measure_text_width(text: &str, size: f32, font: Font) -> f32 {
 
 fn char_len(s: &str) -> usize { s.chars().count() }
 
-fn char_to_byte(s: &str, char_idx: usize) -> usize {
+pub fn char_to_byte(s: &str, char_idx: usize) -> usize {
     s.char_indices().nth(char_idx).map(|(i, _)| i).unwrap_or(s.len())
 }
 

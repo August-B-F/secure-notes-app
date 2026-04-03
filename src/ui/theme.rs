@@ -1,4 +1,4 @@
-use iced::widget::{button, container, scrollable, text, text_editor, text_input};
+use iced::widget::{button, container, scrollable, svg, text, text_editor, text_input};
 use iced::{Border, Color, Theme};
 
 pub const BG_PRIMARY: Color = Color::from_rgb(0x1F as f32 / 255.0, 0x1F as f32 / 255.0, 0x1F as f32 / 255.0); // #1F1F1F
@@ -309,6 +309,51 @@ pub fn icon_button(_theme: &Theme, status: button::Status) -> button::Style {
             ..Default::default()
         },
         ..Default::default()
+    }
+}
+
+pub fn window_control_button(
+    hover_color: Color,
+) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |_theme: &Theme, status: button::Status| {
+        let (bg, text) = match status {
+            button::Status::Hovered | button::Status::Pressed => {
+                (hover_color, Color::from_rgb(0.15, 0.15, 0.15))
+            }
+            _ => (TRANSPARENT, TEXT_SECONDARY),
+        };
+        button::Style {
+            background: Some(iced::Background::Color(bg)),
+            text_color: text,
+            border: Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+}
+
+pub fn transparent_button(_theme: &Theme, _status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(iced::Background::Color(TRANSPARENT)),
+        text_color: TEXT_SECONDARY,
+        border: Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+pub fn svg_hover_color(
+    hover_color: Color,
+) -> impl Fn(&Theme, svg::Status) -> svg::Style {
+    move |_theme: &Theme, status: svg::Status| {
+        match status {
+            svg::Status::Hovered => svg::Style { color: Some(hover_color) },
+            svg::Status::Idle => svg::Style { color: Some(TEXT_SECONDARY) },
+        }
     }
 }
 

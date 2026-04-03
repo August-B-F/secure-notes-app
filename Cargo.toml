@@ -29,6 +29,9 @@ arboard = "3"
 # File dialogs
 rfd = "0.15"
 
+# Open URLs in default browser
+open = "5"
+
 # Utilities
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
