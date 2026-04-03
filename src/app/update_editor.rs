@@ -104,7 +104,8 @@ impl App {
                             state.slash_filter.clear();
                             state.slash_selected = 0;
                         } else {
-                            state.push_undo();
+                            use crate::ui::md_widget::UndoEditKind;
+                            state.push_undo_grouped(UndoEditKind::Typing);
                             state.insert_char(c);
                             self.editor_dirty = true;
                             self.last_edit_time = Some(Instant::now());
@@ -385,7 +386,8 @@ impl App {
                                 }
                             }
                         } else {
-                            state.push_undo();
+                            use crate::ui::md_widget::UndoEditKind;
+                            state.push_undo_grouped(UndoEditKind::Delete);
                             state.backspace();
                             renumber_list(state, state.cursor.0);
                             self.editor_dirty = true;
@@ -429,7 +431,8 @@ impl App {
                                 }
                             }
                         } else {
-                            state.push_undo();
+                            use crate::ui::md_widget::UndoEditKind;
+                            state.push_undo_grouped(UndoEditKind::Delete);
                             state.delete();
                             self.editor_dirty = true;
                             self.last_edit_time = Some(Instant::now());
@@ -456,7 +459,21 @@ impl App {
                                     }
                                 }
                                 state.selection = None;
+                            } else if let Some((start, end)) = state.selection_ordered() {
+                                // Multi-line indent: add 2 spaces to each selected line
+                                state.push_undo();
+                                for li in start.0..=end.0.min(state.lines.len() - 1) {
+                                    state.lines[li] = format!("  {}", &state.lines[li]);
+                                }
+                                state.cursor.1 += 2;
+                                state.selection = Some((
+                                    (start.0, start.1 + 2),
+                                    (end.0, end.1 + 2),
+                                ));
+                                self.editor_dirty = true;
+                                self.last_edit_time = Some(Instant::now());
                             } else {
+                                state.push_undo();
                                 state.lines[line] = format!("  {}", &state.lines[line]);
                                 state.cursor.1 += 2;
                                 self.editor_dirty = true;
@@ -465,12 +482,45 @@ impl App {
                         }
                     }
                     MdAction::Unindent => {
-                        let (line, _) = state.cursor;
-                        if line < state.lines.len() && state.lines[line].starts_with("  ") {
-                            state.lines[line] = state.lines[line][2..].to_string();
-                            state.cursor.1 = state.cursor.1.saturating_sub(2);
-                            self.editor_dirty = true;
-                            self.last_edit_time = Some(Instant::now());
+                        if let Some((start, end)) = state.selection_ordered() {
+                            // Multi-line unindent: remove up to 2 leading spaces from each selected line
+                            state.push_undo();
+                            let mut any_changed = false;
+                            for li in start.0..=end.0.min(state.lines.len() - 1) {
+                                if state.lines[li].starts_with("  ") {
+                                    state.lines[li] = state.lines[li][2..].to_string();
+                                    any_changed = true;
+                                } else if state.lines[li].starts_with(' ') {
+                                    state.lines[li] = state.lines[li][1..].to_string();
+                                    any_changed = true;
+                                }
+                            }
+                            if any_changed {
+                                state.cursor.1 = state.cursor.1.saturating_sub(2);
+                                let new_start_col = start.1.saturating_sub(2);
+                                let new_end_col = end.1.saturating_sub(2);
+                                state.selection = Some((
+                                    (start.0, new_start_col),
+                                    (end.0, new_end_col),
+                                ));
+                                self.editor_dirty = true;
+                                self.last_edit_time = Some(Instant::now());
+                            }
+                        } else {
+                            let (line, _) = state.cursor;
+                            if line < state.lines.len() && state.lines[line].starts_with("  ") {
+                                state.push_undo();
+                                state.lines[line] = state.lines[line][2..].to_string();
+                                state.cursor.1 = state.cursor.1.saturating_sub(2);
+                                self.editor_dirty = true;
+                                self.last_edit_time = Some(Instant::now());
+                            } else if line < state.lines.len() && state.lines[line].starts_with(' ') {
+                                state.push_undo();
+                                state.lines[line] = state.lines[line][1..].to_string();
+                                state.cursor.1 = state.cursor.1.saturating_sub(1);
+                                self.editor_dirty = true;
+                                self.last_edit_time = Some(Instant::now());
+                            }
                         }
                     }
                     MdAction::Move(motion) => {
@@ -1008,20 +1058,31 @@ impl App {
             Message::FormatLink => {
                 self.active_editor_mut().push_undo();
                 let editor = self.active_editor_mut();
-                if let Some(sel_text) = editor.selected_text() {
+                let sel_text = editor.selected_text();
+                let looks_like_url = sel_text.as_ref().map_or(false, |t| {
+                    t.contains('.') || t.contains("://")
+                });
+                if let Some(ref text) = sel_text {
                     editor.delete_selection();
-                    editor.insert_text(&format!("[{}](url)", sel_text));
+                    if looks_like_url {
+                        // Selected text is a URL — use it as both display text and link target
+                        editor.insert_text(&format!("[{}]({})", text, text));
+                    } else {
+                        // Selected text is display text — put cursor in URL position
+                        editor.insert_text(&format!("[{}](url)", text));
+                    }
                 } else {
                     editor.insert_text("[link text](url)");
                 }
-                // Select the "url" placeholder so user can immediately type the real URL
-                let editor = self.active_editor_mut();
-                let (line, col) = editor.cursor;
-                // cursor is after the closing ), so "url" is at col-4..col-1
-                let url_end = col.saturating_sub(1);
-                let url_start = url_end.saturating_sub(3);
-                editor.cursor = (line, url_end);
-                editor.selection = Some(((line, url_start), (line, url_end)));
+                if !looks_like_url {
+                    // Select the "url" placeholder so user can immediately type the real URL
+                    let editor = self.active_editor_mut();
+                    let (line, col) = editor.cursor;
+                    let url_end = col.saturating_sub(1);
+                    let url_start = url_end.saturating_sub(3);
+                    editor.cursor = (line, url_end);
+                    editor.selection = Some(((line, url_start), (line, url_end)));
+                }
                 self.editor_dirty = true;
                 self.last_edit_time = Some(Instant::now());
                 Task::none()

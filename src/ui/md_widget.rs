@@ -81,6 +81,14 @@ pub fn filter_slash_commands(query: &str) -> Vec<usize> {
         .collect()
 }
 
+/// Tracks the type of the last edit for undo grouping.
+#[derive(Clone, Copy, PartialEq)]
+pub enum UndoEditKind {
+    Typing,     // consecutive character insertions
+    Delete,     // backspace/delete
+    Other,      // paste, indent, formatting, etc.
+}
+
 pub struct MdEditorState {
     pub lines: Vec<String>,
     pub cursor: (usize, usize), // (line, raw_col)
@@ -110,6 +118,10 @@ pub struct MdEditorState {
     pub click_count: u8,
     pub is_dragging: bool,
     pub is_window_focused: bool,
+    // Undo grouping state
+    undo_last_kind: Option<UndoEditKind>,
+    undo_last_time: Option<Instant>,
+    undo_last_cursor: (usize, usize),
 }
 
 impl MdEditorState {
@@ -149,6 +161,9 @@ impl MdEditorState {
             click_count: 0,
             is_dragging: false,
             is_window_focused: true,
+            undo_last_kind: None,
+            undo_last_time: None,
+            undo_last_cursor: (0, 0),
         }
     }
 
@@ -249,11 +264,38 @@ impl MdEditorState {
     }
 
     /// Save current state to undo stack before making changes
+    /// Always push a new undo snapshot (for discrete operations like paste, indent, formatting).
     pub fn push_undo(&mut self) {
         self.undo_stack.push_back((self.lines.clone(), self.cursor));
         self.redo_stack.clear();
         if self.undo_stack.len() > 200 { self.undo_stack.pop_front(); }
         self.cached_content_height = None;
+        self.undo_last_kind = None;
+        self.undo_last_time = None;
+    }
+
+    /// Push undo with grouping: consecutive edits of the same kind within a short
+    /// time window are batched into a single undo step (like VS Code).
+    /// A new undo snapshot is created when:
+    /// - The edit kind changes (typing → delete, etc.)
+    /// - More than 1 second has passed since the last edit
+    /// - The cursor jumped (not adjacent to previous position)
+    pub fn push_undo_grouped(&mut self, kind: UndoEditKind) {
+        let now = Instant::now();
+        let should_group = self.undo_last_kind == Some(kind)
+            && self.undo_last_time.map_or(false, |t| now.duration_since(t).as_millis() < 1000)
+            && self.cursor.0 == self.undo_last_cursor.0
+            && (self.cursor.1 as isize - self.undo_last_cursor.1 as isize).unsigned_abs() <= 2;
+
+        if !should_group {
+            self.undo_stack.push_back((self.lines.clone(), self.cursor));
+            self.redo_stack.clear();
+            if self.undo_stack.len() > 200 { self.undo_stack.pop_front(); }
+            self.cached_content_height = None;
+        }
+        self.undo_last_kind = Some(kind);
+        self.undo_last_time = Some(now);
+        self.undo_last_cursor = self.cursor;
     }
 
     pub fn undo(&mut self) {
@@ -293,6 +335,13 @@ impl MdEditorState {
         if line < self.lines.len() {
             let byte_pos = char_to_byte(&self.lines[line], col);
             self.lines[line].insert(byte_pos, c);
+            // Shift color ranges on this line that start at or after insertion point
+            for cr in &mut self.colors {
+                if cr.line == line {
+                    if cr.start_col >= col { cr.start_col += 1; }
+                    if cr.end_col >= col { cr.end_col += 1; }
+                }
+            }
             self.cursor.1 = col + 1;
         }
     }
@@ -316,6 +365,43 @@ impl MdEditorState {
             let rest = self.lines[line][byte_pos..].to_string();
             self.lines[line].truncate(byte_pos);
             self.lines.insert(line + 1, rest);
+            // Update color ranges: shift subsequent lines down, split ranges at cursor
+            let mut new_colors = Vec::new();
+            self.colors.retain(|cr| {
+                if cr.line == line && cr.end_col > col {
+                    // This range spans the split point — split it
+                    if cr.start_col < col {
+                        // Part stays on current line (truncated), part goes to new line
+                        new_colors.push(ColorRange {
+                            line: line + 1,
+                            start_col: 0,
+                            end_col: cr.end_col - col,
+                            color: cr.color.clone(),
+                        });
+                    } else {
+                        // Entire range moves to new line
+                        new_colors.push(ColorRange {
+                            line: line + 1,
+                            start_col: cr.start_col - col,
+                            end_col: cr.end_col - col,
+                            color: cr.color.clone(),
+                        });
+                        return false; // remove from current position
+                    }
+                }
+                true
+            });
+            // Truncate ranges that were split (keep only the part before the split)
+            for cr in &mut self.colors {
+                if cr.line == line && cr.end_col > col {
+                    cr.end_col = col;
+                }
+                // Shift all lines after the split down by 1
+                if cr.line > line {
+                    cr.line += 1;
+                }
+            }
+            self.colors.extend(new_colors);
             self.cursor = (line + 1, 0);
         }
     }
@@ -327,11 +413,31 @@ impl MdEditorState {
             let byte_start = char_to_byte(&self.lines[line], col - 1);
             let byte_end = char_to_byte(&self.lines[line], col);
             self.lines[line].replace_range(byte_start..byte_end, "");
+            // Shift color ranges on this line left by 1 for ranges after the deleted char
+            for cr in &mut self.colors {
+                if cr.line == line {
+                    if cr.start_col >= col { cr.start_col -= 1; }
+                    else if cr.start_col == col - 1 { /* range starts at deleted char */ }
+                    if cr.end_col >= col { cr.end_col -= 1; }
+                }
+            }
+            // Remove zero-width ranges
+            self.colors.retain(|cr| cr.start_col < cr.end_col);
             self.cursor.1 = col - 1;
         } else if line > 0 {
             let prev_char_len = char_len(&self.lines[line - 1]);
             let current = self.lines.remove(line);
             self.lines[line - 1].push_str(&current);
+            // Merge colors from deleted line into previous line, offset by prev line length
+            for cr in &mut self.colors {
+                if cr.line == line {
+                    cr.line = line - 1;
+                    cr.start_col += prev_char_len;
+                    cr.end_col += prev_char_len;
+                } else if cr.line > line {
+                    cr.line -= 1;
+                }
+            }
             self.cursor = (line - 1, prev_char_len);
         }
     }
@@ -345,9 +451,28 @@ impl MdEditorState {
                 let byte_start = char_to_byte(&self.lines[line], col);
                 let byte_end = char_to_byte(&self.lines[line], col + 1);
                 self.lines[line].replace_range(byte_start..byte_end, "");
+                // Shift color ranges left by 1 for ranges after the deleted char
+                for cr in &mut self.colors {
+                    if cr.line == line {
+                        if cr.start_col > col { cr.start_col -= 1; }
+                        if cr.end_col > col { cr.end_col -= 1; }
+                    }
+                }
+                self.colors.retain(|cr| cr.start_col < cr.end_col);
             } else if line + 1 < self.lines.len() {
+                let next_line_len = char_len(&self.lines[line]);
                 let next = self.lines.remove(line + 1);
                 self.lines[line].push_str(&next);
+                // Merge colors from next line into current, offset by current line length
+                for cr in &mut self.colors {
+                    if cr.line == line + 1 {
+                        cr.line = line;
+                        cr.start_col += next_line_len;
+                        cr.end_col += next_line_len;
+                    } else if cr.line > line + 1 {
+                        cr.line -= 1;
+                    }
+                }
             }
         }
     }
@@ -356,10 +481,30 @@ impl MdEditorState {
         let Some((start, end)) = self.selection_ordered() else { return false; };
         if start == end { self.selection = None; return false; }
 
+        let lines_removed = end.0 - start.0;
         if start.0 == end.0 {
+            let deleted_chars = end.1 - start.1;
             let bs = char_to_byte(&self.lines[start.0], start.1);
             let be = char_to_byte(&self.lines[start.0], end.1);
             self.lines[start.0].replace_range(bs..be, "");
+            // Adjust colors on the same line
+            for cr in &mut self.colors {
+                if cr.line == start.0 {
+                    if cr.start_col >= end.1 {
+                        cr.start_col -= deleted_chars;
+                        cr.end_col -= deleted_chars;
+                    } else if cr.start_col >= start.1 {
+                        cr.start_col = start.1;
+                        if cr.end_col >= end.1 {
+                            cr.end_col -= deleted_chars;
+                        } else {
+                            cr.end_col = start.1;
+                        }
+                    } else if cr.end_col > start.1 {
+                        cr.end_col = if cr.end_col >= end.1 { cr.end_col - deleted_chars } else { start.1 };
+                    }
+                }
+            }
         } else {
             let bs = char_to_byte(&self.lines[start.0], start.1);
             let be = char_to_byte(&self.lines[end.0], end.1);
@@ -367,7 +512,29 @@ impl MdEditorState {
             self.lines[start.0].truncate(bs);
             self.lines[start.0].push_str(&end_rest);
             self.lines.drain(start.0 + 1..=end.0);
+            // Remove colors for deleted lines, adjust surviving colors
+            self.colors.retain(|cr| {
+                if cr.line > start.0 && cr.line <= end.0 { return false; } // deleted line
+                if cr.line == start.0 && cr.start_col >= start.1 { return false; } // in deleted part of first line
+                true
+            });
+            // Merge colors from after deletion on end line → start line
+            for cr in &mut self.colors {
+                if cr.line == end.0 && cr.start_col >= end.1 {
+                    // This range was on the end line after the selection — move to start line
+                    cr.line = start.0;
+                    cr.start_col = cr.start_col - end.1 + start.1;
+                    cr.end_col = cr.end_col - end.1 + start.1;
+                } else if cr.line > end.0 {
+                    cr.line -= lines_removed;
+                }
+                // Truncate ranges that partially overlap the deletion on the first line
+                if cr.line == start.0 && cr.end_col > start.1 && cr.start_col < start.1 {
+                    cr.end_col = start.1;
+                }
+            }
         }
+        self.colors.retain(|cr| cr.start_col < cr.end_col);
         self.cursor = start;
         self.selection = None;
         true
@@ -2024,6 +2191,11 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                 shell.publish((self.on_edit)(MdAction::WindowFocus(true)));
             }
             Event::Window(window::Event::Unfocused) => {
+                // Stop any in-progress drag so selection isn't corrupted on refocus
+                if wstate.dragging {
+                    wstate.dragging = false;
+                    shell.publish((self.on_edit)(MdAction::Release));
+                }
                 shell.publish((self.on_edit)(MdAction::WindowFocus(false)));
             }
             _ => {}
@@ -2431,7 +2603,11 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                     keyboard::Key::Named(keyboard::key::Named::Delete) => Some(MdAction::Delete),
                     keyboard::Key::Named(keyboard::key::Named::Space) => Some(MdAction::Insert(' ')),
                     keyboard::Key::Named(keyboard::key::Named::Tab) => {
-                        Some(MdAction::Insert('\t'))
+                        if shift {
+                            Some(MdAction::Unindent)
+                        } else {
+                            Some(MdAction::Indent)
+                        }
                     }
                     keyboard::Key::Named(keyboard::key::Named::Escape) => {
                         // let app handle escape for search/dialog/unfocus
