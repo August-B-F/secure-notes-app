@@ -37,7 +37,7 @@ pub fn view<'a>(
     search_query: &'a str,
     search_index: usize,
     search_case_sensitive: bool,
-    line_editor_state: &'a crate::ui::line_editor::LineEditorState,
+    line_editor_state: &'a crate::ui::md_widget::MdEditorState,
 ) -> Element<'a, Message> {
     let editor_style = if is_maximized { theme::editor_panel_square as fn(&iced::Theme) -> iced::widget::container::Style } else { theme::editor_panel_rounded };
     let pin_label = if note.is_pinned { "Unpin" } else { "Pin" };
@@ -345,7 +345,9 @@ pub fn view<'a>(
                 .into();
         }
         NoteType::Text => {
-            let editor_area = crate::ui::line_editor::view(line_editor_state, font_size);
+            let editor_area: Element<'a, Message> = crate::ui::md_widget::md_editor(line_editor_state, |action| Message::MdEdit(action))
+                .size(font_size as f32)
+                .into();
 
             if search_open {
                 let match_count = line_editor_state.search_matches.len();

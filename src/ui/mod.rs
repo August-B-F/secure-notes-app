@@ -1,6 +1,5 @@
 pub mod canvas_editor;
 pub mod file_viewer;
-pub mod line_editor;
 pub mod md_highlight;
 pub mod md_widget;
 pub mod color_picker;

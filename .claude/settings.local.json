@@ -27,7 +27,9 @@
       "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_core-0.13.2/src/text/**)",
       "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced-0.13.1/src/**)",
       "Read(//c/serverSync/notes-app/$USERPROFILE/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/iced_core-0.13.2/src/mouse/**)",
-      "Bash(taskkill //F //IM notes-app.exe)"
+      "Bash(taskkill //F //IM notes-app.exe)",
+      "Bash(wc -l /c/serverSync/secure-notes-app/src/ui/*.rs /c/serverSync/secure-notes-app/src/ui/dialog/*.rs)",
+      "Bash(node -e ':*)"
     ]
   }
 }
