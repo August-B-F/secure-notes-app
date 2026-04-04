@@ -4,6 +4,24 @@ impl App {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let had_dialog = self.active_dialog.is_some();
 
+        // Close sort menu when user clicks outside it (on editor, sidebar, notes, etc.)
+        if self.sort_menu_open {
+            match &message {
+                Message::SelectNote(_) | Message::SelectView(_)
+                | Message::LineClicked(_) | Message::LineRightClicked(_)
+                | Message::MdEdit(_) | Message::LineInputChanged(_, _)
+                | Message::EditorTitleChanged(_) | Message::EditorContentAction(_)
+                | Message::ToggleContextMenu(_) | Message::CloseContextMenu
+                | Message::SearchQueryChanged(_)
+                | Message::FormatBold | Message::FormatItalic | Message::FormatHeading
+                | Message::FormatList | Message::FormatCheckbox | Message::FormatCode
+                | Message::WindowDrag
+                | Message::CanvasSelect(_) | Message::CanvasPan(_, _)
+                => { self.sort_menu_open = false; }
+                _ => {}
+            }
+        }
+
         // passthrough: these messages should not close context menus
         match &message {
             Message::ToggleContextMenu(_) | Message::CloseContextMenu
@@ -13,7 +31,7 @@ impl App {
             | Message::ToggleColorSubmenu(_) | Message::ToggleFolderColorSubmenu(_) | Message::OpenMoveFolderPicker(_) | Message::ColorPickerHue(_)
             | Message::OpenColorSubmenu(_) | Message::OpenFolderColorSubmenu(_) | Message::OpenMoveSubmenu(_) | Message::OpenNewNoteSubmenu(_) | Message::ToggleNewNoteSubmenu(_) | Message::OpenEditorSubmenu(_) | Message::CloseSubmenus
             | Message::ColorPickerSat(_) | Message::ColorPickerLit(_)
-            | Message::ColorPickerSVChanged(_, _) | Message::ColorPickerPreset(_)
+            | Message::ColorPickerSVChanged(_, _) | Message::ColorPickerPreset(_) | Message::ColorPickerHexInput(_)
             | Message::RenameNoteChanged(_) | Message::RenameNoteSubmit
             | Message::RenameFolderChanged(_) | Message::RenameFolderSubmit
             | Message::CancelRename | Message::NotePasswordInputChanged(_)
@@ -43,7 +61,7 @@ impl App {
             | Message::CanvasAddEdge(_, _, _, _) | Message::CanvasDeleteSelected | Message::CanvasAddNode(_, _) | Message::CanvasAddNodeCenter
             | Message::CanvasUndo | Message::CanvasRedo => {}
             _ => {
-                self.context_menu = None; self.color_submenu_for = None; self.move_submenu_for = None; self.new_note_submenu_for = None; self.editor_submenu = None; self.toolbar_move_open = false; self.potential_drag = None; self.hovered_item = None;
+                self.context_menu = None; self.color_submenu_for = None; self.move_submenu_for = None; self.new_note_submenu_for = None; self.editor_submenu = None; self.toolbar_move_open = false; self.potential_drag = None; self.hovered_item = None; self.sort_menu_open = false;
                 // auto-submit active rename on unrelated actions
                 let should_submit = match &message {
                     Message::SelectNote(id) => self.renaming_note != Some(*id),

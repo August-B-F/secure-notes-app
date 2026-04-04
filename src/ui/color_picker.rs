@@ -1,6 +1,6 @@
 use iced::mouse;
 use iced::widget::canvas::{self, Cache, Canvas, Event, Frame, Geometry, Path, Stroke};
-use iced::widget::{column, container, row, text, Space};
+use iced::widget::{column, container, row, text_input, Space};
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme};
 
 use crate::app::Message;
@@ -25,11 +25,16 @@ impl canvas::Program<Message> for PickerProgram {
     type State = PickerInteraction;
 
     fn update(&self, state: &mut PickerInteraction, event: Event, bounds: Rectangle, cursor: mouse::Cursor) -> (canvas::event::Status, Option<Message>) {
-        let pos = cursor.position_in(bounds);
-        if pos.is_none() && !matches!(state.action, PickerAction::None) {
-            state.action = PickerAction::None;
-            return (canvas::event::Status::Ignored, None);
-        }
+        let is_dragging = !matches!(state.action, PickerAction::None);
+
+        // When dragging, use absolute cursor position so drag continues outside bounds
+        let pos = if is_dragging {
+            cursor.position_in(bounds).or_else(|| {
+                cursor.position().map(|abs| Point::new(abs.x - bounds.x, abs.y - bounds.y))
+            })
+        } else {
+            cursor.position_in(bounds)
+        };
         let Some(pos) = pos else { return (canvas::event::Status::Ignored, None) };
 
         let w = bounds.width;
@@ -66,8 +71,12 @@ impl canvas::Program<Message> for PickerProgram {
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(_)) => {
-                state.action = PickerAction::None;
-                (canvas::event::Status::Captured, None)
+                if is_dragging {
+                    state.action = PickerAction::None;
+                    (canvas::event::Status::Captured, None)
+                } else {
+                    (canvas::event::Status::Ignored, None)
+                }
             }
             _ => (canvas::event::Status::Ignored, None),
         }
@@ -125,7 +134,19 @@ pub fn view<'a>(
                 ..Default::default()
             }),
         Space::with_width(8),
-        text(hex).size(12).style(|_t| theme::primary_text()),
+        text_input("", &hex)
+            .on_input(Message::ColorPickerHexInput)
+            .size(12)
+            .width(75)
+            .padding(2)
+            .style(|_t: &iced::Theme, _s| iced::widget::text_input::Style {
+                background: iced::Background::Color(Color::TRANSPARENT),
+                border: iced::Border { radius: 3.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                icon: Color::from_rgb(0.6, 0.6, 0.6),
+                placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                value: Color::from_rgb(0.85, 0.85, 0.87),
+                selection: Color::from_rgb(0.25, 0.35, 0.45),
+            }),
     ].align_y(iced::Alignment::Center);
 
     let mut presets = row![].spacing(3);

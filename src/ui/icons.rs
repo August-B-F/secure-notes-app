@@ -78,7 +78,7 @@ icon!(pin_filled, b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' 
 
 icon!(lock_closed, b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='#8D8D8D' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='11' width='18' height='11' rx='2' ry='2' fill='#8D8D8D' stroke-width='2.5'/><path d='M7 11V7a5 5 0 0110 0v4' stroke-width='3.5'/></svg>");
 
-icon!(lock_active, b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='#E5D54D' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='11' width='18' height='11' rx='2' ry='2' fill='#E5D54D'/><path d='M7 11V7a5 5 0 0110 0v4'/></svg>");
+icon!(lock_active, b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='#8D8D8D' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='11' width='18' height='11' rx='2' ry='2' fill='#8D8D8D'/><path d='M7 11V7a5 5 0 0110 0v4'/></svg>");
 
 icon!(unlock_icon, b"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='#8D8D8D' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='11' width='18' height='11' rx='2' ry='2' fill='#8D8D8D'/><path d='M7 11V7a5 5 0 019.9-1'/></svg>");
 

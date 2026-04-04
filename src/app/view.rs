@@ -302,6 +302,16 @@ impl App {
             right_panel
         };
 
+        // When sort menu is open, clicks on the tags panel or right panel close it
+        let (tags, right_panel): (Element<Message>, Element<Message>) = if self.sort_menu_open {
+            (
+                mouse_area(tags).on_press(Message::ToggleSortMenu).into(),
+                mouse_area(right_panel).on_press(Message::ToggleSortMenu).into(),
+            )
+        } else {
+            (tags, right_panel)
+        };
+
         let content_row: Element<Message> = if self.show_sidebar {
             row![tags, notes, right_panel].into()
         } else {

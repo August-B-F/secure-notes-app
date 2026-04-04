@@ -317,12 +317,49 @@ impl App {
                 self.color_submenu_is_folder = false;
                 self.move_submenu_for = None;
                 self.new_note_submenu_for = None;
+                if let Some(note) = self.notes.iter().find(|n| n.id == id) {
+                    let c = note.color.to_iced_color();
+                    let max = c.r.max(c.g).max(c.b);
+                    let min = c.r.min(c.g).min(c.b);
+                    let d = max - min;
+                    let h = if d < 0.001 { 0.0 } else if (max - c.r).abs() < 0.001 {
+                        60.0 * (((c.g - c.b) / d) % 6.0)
+                    } else if (max - c.g).abs() < 0.001 {
+                        60.0 * ((c.b - c.r) / d + 2.0)
+                    } else {
+                        60.0 * ((c.r - c.g) / d + 4.0)
+                    };
+                    let s = if max > 0.0 { d / max } else { 0.0 };
+                    self.color_hue = if h < 0.0 { h + 360.0 } else { h };
+                    self.color_sat = s * 100.0;
+                    self.color_lit = max * 100.0;
+                }
                 Task::none()
             }
             Message::ToggleColorSubmenu(id) => {
-                self.color_submenu_for = if self.color_submenu_for == Some(id) { None } else { Some(id) };
+                let opening = self.color_submenu_for != Some(id);
+                self.color_submenu_for = if opening { Some(id) } else { None };
                 self.color_submenu_is_folder = false;
                 self.move_submenu_for = None;
+                if opening {
+                    if let Some(note) = self.notes.iter().find(|n| n.id == id) {
+                        let c = note.color.to_iced_color();
+                        let max = c.r.max(c.g).max(c.b);
+                        let min = c.r.min(c.g).min(c.b);
+                        let d = max - min;
+                        let h = if d < 0.001 { 0.0 } else if (max - c.r).abs() < 0.001 {
+                            60.0 * (((c.g - c.b) / d) % 6.0)
+                        } else if (max - c.g).abs() < 0.001 {
+                            60.0 * ((c.b - c.r) / d + 2.0)
+                        } else {
+                            60.0 * ((c.r - c.g) / d + 4.0)
+                        };
+                        let s = if max > 0.0 { d / max } else { 0.0 };
+                        self.color_hue = if h < 0.0 { h + 360.0 } else { h };
+                        self.color_sat = s * 100.0;
+                        self.color_lit = max * 100.0;
+                    }
+                }
                 Task::none()
             }
             Message::OpenFolderColorSubmenu(id) => {
@@ -661,6 +698,36 @@ impl App {
             Message::ColorPickerSat(s) => { self.color_sat = s; self.auto_apply_color() }
             Message::ColorPickerLit(l) => { self.color_lit = l; self.auto_apply_color() }
             Message::ColorPickerSVChanged(s, v) => { self.color_sat = s; self.color_lit = v; self.auto_apply_color() }
+            Message::ColorPickerHexInput(hex) => {
+                let hex = hex.trim_start_matches('#');
+                if hex.len() == 6 {
+                    if let (Ok(r), Ok(g), Ok(b)) = (
+                        u8::from_str_radix(&hex[0..2], 16),
+                        u8::from_str_radix(&hex[2..4], 16),
+                        u8::from_str_radix(&hex[4..6], 16),
+                    ) {
+                        let rf = r as f32 / 255.0;
+                        let gf = g as f32 / 255.0;
+                        let bf = b as f32 / 255.0;
+                        let max = rf.max(gf).max(bf);
+                        let min = rf.min(gf).min(bf);
+                        let d = max - min;
+                        let h = if d < 0.001 { 0.0 } else if (max - rf).abs() < 0.001 {
+                            60.0 * (((gf - bf) / d) % 6.0)
+                        } else if (max - gf).abs() < 0.001 {
+                            60.0 * ((bf - rf) / d + 2.0)
+                        } else {
+                            60.0 * ((rf - gf) / d + 4.0)
+                        };
+                        let s = if max > 0.0 { d / max } else { 0.0 };
+                        self.color_hue = if h < 0.0 { h + 360.0 } else { h };
+                        self.color_sat = s * 100.0;
+                        self.color_lit = max * 100.0;
+                        return self.auto_apply_color();
+                    }
+                }
+                Task::none()
+            }
             Message::MoveNoteToFolder(item_id, folder_id) => {
                 self.active_dialog = None;
                 self.toolbar_move_open = false;

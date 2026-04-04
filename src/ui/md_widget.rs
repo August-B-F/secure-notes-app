@@ -1720,9 +1720,17 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                     apply_color_ranges_to_segments(&mut segments, &adj_refs);
                 }
                 let display_text: String = format!("{}{}", leading_ws, segments.iter().map(|s| s.text.as_str()).collect::<String>());
-                let display_font = if segments.iter().any(|s| s.font.weight == iced::font::Weight::Bold) {
-                    Font { weight: iced::font::Weight::Bold, ..Font::DEFAULT }
-                } else { line_font };
+                let display_font = {
+                    let has_bold = segments.iter().any(|s| s.font.weight == iced::font::Weight::Bold);
+                    let has_italic = segments.iter().any(|s| s.font.style == iced::font::Style::Italic);
+                    if has_bold || has_italic {
+                        Font {
+                            weight: if has_bold { iced::font::Weight::Bold } else { line_font.weight },
+                            style: if has_italic { iced::font::Style::Italic } else { line_font.style },
+                            ..Font::DEFAULT
+                        }
+                    } else { line_font }
+                };
                 let display_color = segments.first().map(|s| s.color).unwrap_or(text_color);
                 // Extra height buffer for wrapping: prevents clipping last wrap line
                 let render_h = actual_h + line_fs * 1.3;
@@ -1733,6 +1741,7 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                 let total_display_w = measure_text_width(&display_text, line_fs, display_font);
                 let has_mixed_styles = segments.len() > 1 && segments.iter().any(|s|
                     s.font.weight == iced::font::Weight::Bold
+                    || s.font.style == iced::font::Style::Italic
                     || s.color != segments[0].color);
                 let fits_one_line = total_display_w <= text_bounds.width;
 
@@ -1756,9 +1765,11 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
                         let mut seg_x = base_x + leading_ws_w;
                         for seg in &segments {
                             if seg.text.is_empty() { continue; }
-                            let seg_font = if seg.font.weight == iced::font::Weight::Bold {
-                                Font { weight: iced::font::Weight::Bold, ..Font::DEFAULT }
-                            } else { line_font };
+                            let seg_font = Font {
+                                weight: seg.font.weight,
+                                style: seg.font.style,
+                                ..line_font
+                            };
                             let seg_fs = line_fs * seg.size_mult;
                             let seg_w = measure_text_width(&seg.text, seg_fs, seg_font);
                             TR::fill_text(renderer, iced::advanced::Text {
@@ -1795,9 +1806,11 @@ impl<'a, Message: 'a> Widget<Message, iced::Theme, iced::Renderer> for MdEditorW
 
                         for seg in &segments {
                             if seg.text.is_empty() { continue; }
-                            let seg_font = if seg.font.weight == iced::font::Weight::Bold {
-                                Font { weight: iced::font::Weight::Bold, ..Font::DEFAULT }
-                            } else { line_font };
+                            let seg_font = Font {
+                                weight: seg.font.weight,
+                                style: seg.font.style,
+                                ..line_font
+                            };
                             let seg_fs = line_fs * seg.size_mult;
                             let is_link_seg = seg.color.r == link_green_w.r && seg.color.g == link_green_w.g && seg.color.b == link_green_w.b;
 
@@ -2895,8 +2908,7 @@ fn build_display_segments(line: &str) -> (Vec<TextSegment>, String) {
     (segs, leading.to_string())
 }
 
-/// Build inline segments with formatting (bold/code only).
-/// Italic and quotes kept as plain text with markers visible.
+/// Build inline segments with formatting (bold/italic/code/links).
 fn build_inline_segments(text: &str, base_font: Font, base_color: Color) -> Vec<TextSegment> {
     let mut segs = Vec::new();
     let mut i = 0;
@@ -2946,6 +2958,27 @@ fn build_inline_segments(text: &str, base_font: Font, base_color: Color) -> Vec<
                     link_url: None,
                 });
                 i = end + 2;
+                normal_start = i;
+                continue;
+            }
+        }
+        // Single *italic* (not **)
+        if chars[i] == '*' && !(i + 1 < len && chars[i + 1] == '*') {
+            // find closing single * that is not part of **
+            if let Some(end) = chars[i + 1..].iter().position(|c| *c == '*').map(|p| i + 1 + p) {
+                if i > normal_start {
+                    let t: String = chars[normal_start..i].iter().collect();
+                    segs.push(TextSegment { text: t, font: base_font, color: base_color, size_mult: 1.0, link_url: None });
+                }
+                let italic_text: String = chars[i + 1..end].iter().collect();
+                segs.push(TextSegment {
+                    text: italic_text,
+                    font: Font { style: iced::font::Style::Italic, ..base_font },
+                    color: base_color,
+                    size_mult: 1.0,
+                    link_url: None,
+                });
+                i = end + 1;
                 normal_start = i;
                 continue;
             }

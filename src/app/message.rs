@@ -181,6 +181,7 @@ pub enum Message {
     ColorPickerSat(f32),
     ColorPickerLit(f32),
     ColorPickerSVChanged(f32, f32),
+    ColorPickerHexInput(String),
     MoveNoteToFolder(Uuid, Option<Uuid>),
 
     EditorTitleChanged(String),
